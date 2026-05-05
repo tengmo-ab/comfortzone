@@ -4,3 +4,5 @@ __pycache__/
 *.log
 .env
 tools/sample_response.json
+secrets.local.json
+old_controller.yaml
