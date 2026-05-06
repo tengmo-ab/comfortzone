@@ -1,0 +1,34 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Konfiguration av Comfortzone värmepump",
+                "description": "Ange dina Loggamera-uppgifter för att integrera din Comfortzone-värmepump.\n\n**Var hittar jag denna information?**\n1. Logga in på [Loggamera-portalen](https://portal.loggamera.se).\n2. Gå till enhetens inställningar.\n3. Hitta **Enhets-ID** (vanligtvis ett nummer).\n4. Generera eller kopiera din **API-nyckel**.\n\nVälj din pumpmodell. Du kan ändra detta senare.",
+                "data": {
+                    "api_key": "Loggamera API-nyckel",
+                    "device_id": "Loggamera Enhets-ID",
+                    "model": "Värmepumpsmodell"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Kunde inte ansluta till Loggamera-API:et. Kontrollera nätverksanslutningen och att Loggameras tjänster är online.",
+            "invalid_auth": "Autentisering misslyckades. Verifiera att API-nyckeln och Enhets-ID är korrekta.",
+            "unknown": "Ett oväntat fel uppstod under valideringen. Se Home Assistants loggar för mer information."
+        },
+        "abort": {
+            "already_configured": "En Comfortzone-värmepump med detta Enhets-ID är redan konfigurerad i Home Assistant."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Inställningar för Comfortzone värmepump",
+                "description": "Justera integrationens inställningar.",
+                "data": {
+                    "model": "Värmepumpsmodell"
+                }
+            }
+        }
+    }
+}
