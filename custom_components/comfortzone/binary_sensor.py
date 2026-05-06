@@ -32,6 +32,9 @@ BINARY_SENSOR_TYPES = {
         "on_value": "1", # Assumes "1" means HW valve is active
         "options": {"entity_registry_enabled_default": False} # Diagnostic, disable default
     },
+    "cooling_installed": {"name": "Cooling Installed", "device_class": None, "icon_on": "mdi:snowflake", "icon_off": "mdi:snowflake-off", "on_value": "1"},
+    "cooling_enabled": {"name": "Cooling Enabled", "device_class": None, "icon_on": "mdi:power", "icon_off": "mdi:power-sleep", "on_value": "1"},
+    "dual_heating_curves": {"name": "Dual Heating Curves", "device_class": None, "icon_on": "mdi:chart-bell-curve", "icon_off": "mdi:chart-line", "on_value": "1"},
 }
 
 async def async_setup_entry( hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,) -> None:

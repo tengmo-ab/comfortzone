@@ -41,6 +41,10 @@ SENSOR_CONFIG: Dict[str, Dict[str, Any]] = {
     "compressor_freq": {"property_read": CLEAR_TEXT_NAMES["COMPRESSOR_FREQ"], "name": "Compressor Frequency", "device_class": SensorDeviceClass.FREQUENCY, "state_class": SensorStateClass.MEASUREMENT, "unit": UnitOfFrequency.HERTZ, "icon": "mdi:sine-wave"},
     "hot_water_priority": {"property_read": CLEAR_TEXT_NAMES["HW_PRIORITY"], "name": "Hot Water Priority", "device_class": None, "state_class": SensorStateClass.MEASUREMENT, "unit": None, "icon": "mdi:priority-high"}, # Measurement makes sense if it changes
     "total_output_power": {"property_read": CLEAR_TEXT_NAMES["TOTAL_POWER"], "name": "Total Output Power", "device_class": SensorDeviceClass.POWER, "state_class": SensorStateClass.MEASUREMENT, "unit": UnitOfPower.WATT, "icon": "mdi:lightning-bolt-circle"},
+    "defrost_interval": {"property_read": CLEAR_TEXT_NAMES["DEFROST_INTERVAL"], "name": "Defrost Interval", "device_class": None, "state_class": SensorStateClass.MEASUREMENT, "unit": UnitOfTime.MINUTES, "icon": "mdi:timer"},
+    "defrost_block_time": {"property_read": CLEAR_TEXT_NAMES["DEFROST_BLOCK_TIME"], "name": "Defroster Block Time", "device_class": None, "state_class": SensorStateClass.MEASUREMENT, "unit": UnitOfTime.MINUTES, "icon": "mdi:timer-off"},
+    "compressor_freq_max": {"property_read": CLEAR_TEXT_NAMES["COMPRESSOR_FREQ_MAX"], "name": "Compressor Frequency Max", "device_class": SensorDeviceClass.FREQUENCY, "state_class": SensorStateClass.MEASUREMENT, "unit": UnitOfFrequency.HERTZ, "icon": "mdi:sine-wave"},
+    "heater_element_allowed": {"property_read": CLEAR_TEXT_NAMES["HEATER_ELEMENT_ALLOWED"], "name": "Heater Element Allowed Temp", "device_class": SensorDeviceClass.TEMPERATURE, "state_class": SensorStateClass.MEASUREMENT, "unit": UnitOfTemperature.CELSIUS, "icon": "mdi:thermometer-low"},
 }
 
 async def async_setup_entry( hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback,) -> None:

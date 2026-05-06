@@ -50,6 +50,13 @@ CLEAR_TEXT_NAMES = {
     # --- ADDED VALVE NAMES ---
     "EXCHANGE_VALVE_HEATING": "Exchange valve heating (on/off)",
     "EXCHANGE_VALVE_HW": "Exchange valve hot water (on/off)",
+    "DEFROST_INTERVAL": "Defrost interval",
+    "DEFROST_BLOCK_TIME": "Defroster block time",
+    "COMPRESSOR_FREQ_MAX": "Compressor freq. max",
+    "COOLING_INSTALLED": "Cooling installed",
+    "COOLING_ENABLED": "Cooling enabled",
+    "DUAL_HEATING_CURVES": "Dual heating curves",
+    "HEATER_ELEMENT_ALLOWED": "Heater element allowed",
 }
 
 # Define keys for Binary Sensors based on ClearTextName or other logic
@@ -62,4 +69,7 @@ BINARY_SENSOR_MAP = {
     # --- ADDED VALVE MAPPINGS ---
     "heating_valve": CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HEATING"],
     "hot_water_valve": CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HW"],
+    "cooling_installed": CLEAR_TEXT_NAMES["COOLING_INSTALLED"],
+    "cooling_enabled": CLEAR_TEXT_NAMES["COOLING_ENABLED"],
+    "dual_heating_curves": CLEAR_TEXT_NAMES["DUAL_HEATING_CURVES"],
 }
