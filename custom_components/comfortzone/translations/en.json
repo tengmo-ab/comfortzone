@@ -3,16 +3,20 @@
         "step": {
             "user": {
                 "title": "Connect your Comfortzone heat pump",
-                "description": "This integration uses the **Loggamera** cloud API to read and control your heat pump.\n\n**What you need before continuing:**\n\n1. 🔑 **API key & Device ID** — Log in to the [Loggamera portal](https://portal.loggamera.se), navigate to **Settings -> API** ([https://portal.loggamera.se/ApiSettings/Index/](https://portal.loggamera.se/ApiSettings/Index/)) to find both your API key and the numeric Device ID for your heat pump.\n2. 🏷️ **Model** — Pick `RX95` for a Comfortzone RX95 (or `Other`). You can change this later.\n\nThe integration polls every minute. The first refresh after setup may take a few seconds because the Loggamera API is sometimes slow.",
+                "description": "This integration uses the **Loggamera** cloud API to read and control your heat pump.\n\n**What you need before continuing:**\n\n1. 🔑 **API key & Device ID** — Log in to the [Loggamera portal](https://portal.loggamera.se), navigate to **Settings -> API** ([https://portal.loggamera.se/ApiSettings/Index/](https://portal.loggamera.se/ApiSettings/Index/)) to find both your API key and the numeric Device ID for your heat pump.\n2. 🏷️ **Model** — Pick `RX95` for a Comfortzone RX95 (or `Other`). You can change this later.\n3. 💸 **(Optional) Electricity price entity** — Pick a Nord Pool / electricity price sensor to enable per-mode cost tracking.\n\nThe integration polls every minute. The first refresh after setup may take a few seconds because the Loggamera API is sometimes slow.",
                 "data": {
                     "api_key": "Loggamera API key",
                     "device_id": "Loggamera Device ID",
-                    "model": "Heat pump model"
+                    "model": "Heat pump model",
+                    "price_entity": "Electricity price entity (optional)",
+                    "price_in_ore": "Price entity reports öre/kWh (uncheck for SEK/kWh)"
                 },
                 "data_description": {
                     "api_key": "Found under Settings -> API in your Loggamera account.",
                     "device_id": "The numeric ID of your heat pump, found under Settings -> API.",
-                    "model": "Used for branding and future model-specific behavior."
+                    "model": "Used for branding and future model-specific behavior.",
+                    "price_entity": "Examples: sensor.nord_pool_se3_aktuellt_pris (modern Nord Pool integration → SEK/kWh) or older Nord Pool sensors that still report öre/kWh.",
+                    "price_in_ore": "Modern Nord Pool already reports SEK/kWh — leave this off. Older or templated sensors may still report öre/kWh; tick the box in that case."
                 }
             }
         },
@@ -34,12 +38,12 @@
                     "model": "Heat pump model",
                     "price_entity": "Electricity price entity (optional)",
                     "price_in_ore": "Price entity reports öre/kWh (uncheck for SEK/kWh)",
-                    "compressor_electrical_factor": "Compressor electrical factor"
+                    "compressor_electrical_factor": "Compressor factor override (0 = use spec curve)"
                 },
                 "data_description": {
-                    "price_entity": "Entity ID of an electricity-price sensor (e.g. sensor.nord_pool_se3_price). Required for the heating cost / hot water cost sensors to update.",
-                    "price_in_ore": "Most Nord Pool helpers in Sweden report öre/kWh. Disable if your sensor already reports SEK/kWh.",
-                    "compressor_electrical_factor": "Conversion factor from reported thermal output (W) to estimated electrical input (W). Default 0.4 ≈ COP 2.5; lower this if your pump is more efficient."
+                    "price_entity": "Pick the entity that reports your current electricity spot price. Required for the heating cost / hot water cost sensors to update.",
+                    "price_in_ore": "Modern Nord Pool sensors report SEK/kWh — leave this off. Tick if your sensor reports öre/kWh.",
+                    "compressor_electrical_factor": "Leave at 0 to interpolate the EN255 spec curve (factor 0.235 at 35°C flow, 0.314 at 50°C flow). Set a non-zero value (e.g. 0.4) to override with a fixed thermal-to-electrical conversion."
                 }
             }
         }

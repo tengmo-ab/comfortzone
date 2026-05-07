@@ -3,6 +3,46 @@
 All notable changes to the Comfortzone Heat Pump integration are documented here.
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] – 2026-05-07
+
+### Added
+- **Spec-based COP curve** for compressor electrical estimation. The factor
+  now interpolates linearly between the EN255 datasheet anchor points
+  (`0.235` at 35°C flow → `0.314` at 50°C flow) so estimates track the
+  pump's real performance under different operating conditions. Users can
+  still override with a fixed factor in options (set to 0 to keep the
+  spec curve, default).
+- **Defrost detection** — `defrost_cycle_count` and `last_defrost_duration`
+  use a heuristic ("compressor active but neither valve open") and report
+  their result when the next-cycle resolution lands.
+- **Compressor cycle counter** for wear/short-cycling diagnostics.
+- **Per-mode runtime sensors** (`heating_runtime`, `hot_water_runtime`)
+  reporting cumulative hours.
+- **Heating circuit ΔT** sensor (flow − return) for diagnosing
+  circulation-flow problems.
+- **Tank decay rate** sensor (`tank_decay_rate`) measuring °C/h drop in the
+  tank while the pump is not producing hot water.
+- **Specific heating energy** sensor (`specific_heating_energy`) — moving
+  average of kWh required per °C indoor temperature rise.
+- **Reduced fan schedule** diagnostic sensors for weekday and weekend
+  quiet-mode windows.
+- **Shower-in-progress** binary sensor — heuristic detection from a fast
+  drop in tank temperature while no production is happening.
+- **Pump activity status** now reports `Defrosting` when both valves are
+  closed mid-compressor-run.
+- **Price entity at install** — the initial setup now offers a
+  `sensor`-domain entity selector for a Nord Pool / electricity price
+  sensor, making per-mode cost tracking work out of the box.
+
+### Changed
+- `instant_cop` is **enabled by default**. Reports unavailable when the
+  estimated electrical input is below 100 W to avoid noise near idle.
+- Default for `price_in_ore` changed to **off**. The modern Nord Pool
+  integration reports SEK/kWh natively; the toggle is only useful for
+  legacy setups.
+- Compressor electrical factor option's default is now `0` (= use spec
+  curve). The previous `0.4` constant remains available as an override.
+
 ## [2.1.0] – 2026-05-07
 
 ### Added

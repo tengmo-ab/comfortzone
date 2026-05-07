@@ -3,16 +3,20 @@
         "step": {
             "user": {
                 "title": "Anslut din Comfortzone-värmepump",
-                "description": "Integrationen läser av och styr din värmepump via **Loggamera**s moln-API.\n\n**Det här behöver du innan du fortsätter:**\n\n1. 🔑 **API-nyckel & Enhets-ID** — logga in på [Loggamera-portalen](https://portal.loggamera.se), gå till **Inställningar - API** ([https://portal.loggamera.se/ApiSettings/Index/](https://portal.loggamera.se/ApiSettings/Index/)) för att hitta både din API-nyckel och det numeriska enhets-ID:t för din värmepump.\n2. 🏷️ **Modell** — välj `RX95` för en Comfortzone RX95 (eller `Other`). Kan ändras senare.\n\nIntegrationen pollar varje minut. Första uppdateringen efter installationen kan ta några sekunder eftersom Loggameras API ibland är långsamt.",
+                "description": "Integrationen läser av och styr din värmepump via **Loggamera**s moln-API.\n\n**Det här behöver du innan du fortsätter:**\n\n1. 🔑 **API-nyckel & Enhets-ID** — logga in på [Loggamera-portalen](https://portal.loggamera.se), gå till **Inställningar - API** ([https://portal.loggamera.se/ApiSettings/Index/](https://portal.loggamera.se/ApiSettings/Index/)) för att hitta både din API-nyckel och det numeriska enhets-ID:t för din värmepump.\n2. 🏷️ **Modell** — välj `RX95` för en Comfortzone RX95 (eller `Other`). Kan ändras senare.\n3. 💸 **(Valfritt) Elpris-sensor** — välj en Nord Pool/elprissensor så aktiveras kostnadssensorer per värme- respektive varmvattenproduktion direkt.\n\nIntegrationen pollar varje minut. Första uppdateringen efter installationen kan ta några sekunder eftersom Loggameras API ibland är långsamt.",
                 "data": {
                     "api_key": "Loggamera API-nyckel",
                     "device_id": "Loggamera Enhets-ID",
-                    "model": "Värmepumpsmodell"
+                    "model": "Värmepumpsmodell",
+                    "price_entity": "Elprissensor (valfri)",
+                    "price_in_ore": "Prissensor rapporterar öre/kWh (avmarkera för SEK/kWh)"
                 },
                 "data_description": {
                     "api_key": "Hittas under Inställningar - API på ditt Loggamera-konto.",
                     "device_id": "Det numeriska ID:t för din värmepump, hittas under Inställningar - API.",
-                    "model": "Används för märke och framtida modellspecifik logik."
+                    "model": "Används för märke och framtida modellspecifik logik.",
+                    "price_entity": "Exempel: sensor.nord_pool_se3_aktuellt_pris (moderna Nord Pool-integrationen → SEK/kWh) eller äldre Nord Pool-sensorer som fortfarande rapporterar öre/kWh.",
+                    "price_in_ore": "Moderna Nord Pool rapporterar redan SEK/kWh — låt den vara av. Äldre eller mall-baserade sensorer kan fortfarande rapportera öre/kWh; markera då rutan."
                 }
             }
         },
@@ -34,12 +38,12 @@
                     "model": "Värmepumpsmodell",
                     "price_entity": "Elprissensor (valfri)",
                     "price_in_ore": "Prissensor rapporterar öre/kWh (avmarkera för SEK/kWh)",
-                    "compressor_electrical_factor": "Elektrisk faktor för kompressor"
+                    "compressor_electrical_factor": "Override-faktor för kompressor (0 = använd spec-kurva)"
                 },
                 "data_description": {
-                    "price_entity": "Entitets-ID för en elprissensor (t.ex. sensor.nord_pool_se3_price). Krävs för att kostnadssensorerna ska uppdateras.",
-                    "price_in_ore": "De flesta Nord Pool-mallar i Sverige rapporterar öre/kWh. Avmarkera om din sensor redan rapporterar SEK/kWh.",
-                    "compressor_electrical_factor": "Faktor för att räkna om rapporterad termisk effekt (W) till elektrisk in (W). Standard 0.4 ≈ COP 2.5; sänk om din pump är effektivare."
+                    "price_entity": "Välj sensor som rapporterar aktuellt elpris. Krävs för att kostnadssensorerna ska uppdateras.",
+                    "price_in_ore": "Moderna Nord Pool rapporterar SEK/kWh — låt den vara av. Markera om din sensor rapporterar öre/kWh.",
+                    "compressor_electrical_factor": "Lämna 0 för att interpolera EN255-spec-kurvan (faktor 0,235 vid 35°C framledning, 0,314 vid 50°C). Sätt ett värde (t.ex. 0,4) för att override:a med en fast termisk-till-elektrisk-faktor."
                 }
             }
         }

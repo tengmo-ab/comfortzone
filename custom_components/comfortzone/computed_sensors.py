@@ -7,15 +7,21 @@ raw values (from the coordinator) into more useful information:
 - Estimated electrical power split into total, heating, hot-water and aux
 - Cumulative energy (kWh) per mode for the Home Assistant Energy panel
 - Optional cumulative cost (currency) per mode using a Nord Pool price entity
+- Compressor cycle counter and per-mode runtime
+- Defrost detection
+- Heating circuit ΔT, tank decay rate, specific heating efficiency
+- Instant COP
 
-The numbers depend on a tunable conversion factor (compressor thermal -> electrical)
-and on the user supplying a price entity in the options flow when cost is desired.
+Compressor electrical input is estimated by interpolating the EN255 spec
+curve points from the RX95 datasheet (factor 0.235 at 35°C flow → 0.314 at
+50°C flow). Users can override with a fixed factor in the options flow.
 """
 from __future__ import annotations
 
 import logging
+from collections import deque
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Deque, Optional, Tuple
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -28,6 +34,8 @@ from homeassistant.const import (
     EntityCategory,
     UnitOfEnergy,
     UnitOfPower,
+    UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
@@ -40,8 +48,13 @@ from .const import (
     CONF_COMPRESSOR_ELECTRICAL_FACTOR,
     CONF_PRICE_ENTITY,
     CONF_PRICE_IN_ORE,
+    COP_SPEC_FACTOR_HIGH,
+    COP_SPEC_FACTOR_LOW,
+    COP_SPEC_FLOW_HIGH_C,
+    COP_SPEC_FLOW_LOW_C,
     DEFAULT_COMPRESSOR_FACTOR,
     FAN_MAX_W,
+    MIN_ELECTRICAL_FOR_COP_W,
     STANDBY_W,
 )
 from .entity import build_device_info, device_unique_id
@@ -72,14 +85,41 @@ def _coordinator_values(coordinator: DataUpdateCoordinator) -> Optional[list]:
     return values if isinstance(values, list) else None
 
 
+def _compressor_factor_from_flow(flow_temp_c: Optional[float]) -> float:
+    """Interpolate the thermal-to-electrical factor based on flow temperature.
+
+    Anchored at the two EN255 spec points from the RX95 datasheet:
+      35°C flow → factor 0.235 (COP 4.25)
+      50°C flow → factor 0.314 (COP 3.18)
+    Below 35°C and above 50°C the curve is clamped to the nearest spec point.
+    """
+    if flow_temp_c is None:
+        # Fall back to the high (worst-case) factor when flow unknown
+        return COP_SPEC_FACTOR_HIGH
+    if flow_temp_c <= COP_SPEC_FLOW_LOW_C:
+        return COP_SPEC_FACTOR_LOW
+    if flow_temp_c >= COP_SPEC_FLOW_HIGH_C:
+        return COP_SPEC_FACTOR_HIGH
+    span = COP_SPEC_FLOW_HIGH_C - COP_SPEC_FLOW_LOW_C
+    pos = (flow_temp_c - COP_SPEC_FLOW_LOW_C) / span
+    return COP_SPEC_FACTOR_LOW + pos * (COP_SPEC_FACTOR_HIGH - COP_SPEC_FACTOR_LOW)
+
+
 def _compute_compressor_electrical_w(
-    values: list, compressor_factor: float
+    values: list, override_factor: float
 ) -> Optional[float]:
-    """Estimate compressor electrical input in W based on reported thermal output."""
+    """Estimate compressor electrical input in W using flow-temp-based COP curve.
+
+    A non-zero override_factor (set via options) bypasses the curve and uses
+    that constant factor instead — useful when the user has empirical data.
+    """
     thermal = _read_float(values, CLEAR_TEXT_NAMES["COMPRESSOR_POWER"])
     if thermal is None:
         return None
-    return thermal * compressor_factor
+    if override_factor and override_factor > 0:
+        return thermal * override_factor
+    flow_c = _read_float(values, CLEAR_TEXT_NAMES["FLOW_TEMP"])
+    return thermal * _compressor_factor_from_flow(flow_c)
 
 
 def _compute_circulation_pump_w(values: list) -> float:
@@ -99,18 +139,44 @@ def _compute_addition_w(values: list) -> float:
     return _read_float(values, CLEAR_TEXT_NAMES["ADDITION_POWER"]) or 0.0
 
 
+def _compressor_active(values: list) -> bool:
+    return find_value_from_raw_data(values, CLEAR_TEXT_NAMES["COMPRESSOR_ACTIVE"]) == "1"
+
+
+def _heating_valve_open(values: list) -> bool:
+    return find_value_from_raw_data(
+        values, CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HEATING"]
+    ) == "1"
+
+
+def _hw_valve_open(values: list) -> bool:
+    return find_value_from_raw_data(
+        values, CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HW"]
+    ) == "1"
+
+
 def _is_heating(values: list) -> bool:
-    """Return True if the heat pump is currently directed at space heating."""
-    compressor = find_value_from_raw_data(values, CLEAR_TEXT_NAMES["COMPRESSOR_ACTIVE"])
-    valve = find_value_from_raw_data(values, CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HEATING"])
-    return compressor == "1" and valve == "1"
+    """True when the pump is dedicated to space heating."""
+    return _compressor_active(values) and _heating_valve_open(values)
 
 
 def _is_hot_water(values: list) -> bool:
-    """Return True if the heat pump is currently directed at hot water production."""
-    compressor = find_value_from_raw_data(values, CLEAR_TEXT_NAMES["COMPRESSOR_ACTIVE"])
-    valve = find_value_from_raw_data(values, CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HW"])
-    return compressor == "1" and valve == "1"
+    """True when the pump is dedicated to hot water production."""
+    return _compressor_active(values) and _hw_valve_open(values)
+
+
+def _is_defrosting(values: list) -> bool:
+    """Heuristic: compressor running but neither valve open ⇒ defrost cycle.
+
+    On the RX95 the exchange valves switch between heating and hot-water
+    duty. When the pump enters a defrost / pressure-equalisation cycle both
+    valves close while the compressor continues to run.
+    """
+    return (
+        _compressor_active(values)
+        and not _heating_valve_open(values)
+        and not _hw_valve_open(values)
+    )
 
 
 # --- Base classes ----------------------------------------------------------
@@ -141,8 +207,8 @@ class _ComfortzoneComputedBase(CoordinatorEntity, SensorEntity):
         self._attr_entity_registry_enabled_default = enabled_by_default
         self._attr_device_info = build_device_info(entry)
 
-    def _compressor_factor(self) -> float:
-        """Return the user-configured (or default) compressor electrical factor."""
+    def _compressor_factor_override(self) -> float:
+        """Return user-configured fixed factor, or 0 to mean 'use spec curve'."""
         return float(
             self.entry.options.get(
                 CONF_COMPRESSOR_ELECTRICAL_FACTOR, DEFAULT_COMPRESSOR_FACTOR
@@ -175,13 +241,14 @@ class PumpActivitySensor(_ComfortzoneComputedBase):
             self.async_write_ha_state()
             return
 
-        compressor = find_value_from_raw_data(values, CLEAR_TEXT_NAMES["COMPRESSOR_ACTIVE"])
-        if compressor != "1":
+        if not _compressor_active(values):
             self._attr_native_value = "Idle"
         elif _is_heating(values):
             self._attr_native_value = "Heating"
         elif _is_hot_water(values):
             self._attr_native_value = "Making Hot Water"
+        elif _is_defrosting(values):
+            self._attr_native_value = "Defrosting"
         else:
             self._attr_native_value = "Compressor active (unknown mode)"
         self._attr_available = True
@@ -234,7 +301,9 @@ class TotalElectricalPowerSensor(_PowerSensorBase):
         )
 
     def _compute_w(self, values):
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor())
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        )
         if compressor_e is None:
             return None
         addition = _compute_addition_w(values)
@@ -273,12 +342,16 @@ class HeatingPowerSensor(_PowerSensorBase):
     def _compute_w(self, values):
         if not _is_heating(values):
             return 0.0
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor())
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        )
         if compressor_e is None:
             return 0.0
-        addition = _compute_addition_w(values)
-        circ = _compute_circulation_pump_w(values)
-        return compressor_e + addition + circ
+        return (
+            compressor_e
+            + _compute_addition_w(values)
+            + _compute_circulation_pump_w(values)
+        )
 
 
 class HotWaterPowerSensor(_PowerSensorBase):
@@ -295,12 +368,16 @@ class HotWaterPowerSensor(_PowerSensorBase):
     def _compute_w(self, values):
         if not _is_hot_water(values):
             return 0.0
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor())
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        )
         if compressor_e is None:
             return 0.0
-        addition = _compute_addition_w(values)
-        circ = _compute_circulation_pump_w(values)
-        return compressor_e + addition + circ
+        return (
+            compressor_e
+            + _compute_addition_w(values)
+            + _compute_circulation_pump_w(values)
+        )
 
 
 # --- Energy sensors (cumulative kWh, Energy panel compatible) -------------
@@ -332,14 +409,12 @@ class _IntegratedEnergySensor(_ComfortzoneComputedBase, RestoreSensor):
                 self._accumulated_kwh = 0.0
 
     def _current_power_w(self, values: list) -> float:
-        """Return the instantaneous power for this energy bucket."""
         raise NotImplementedError
 
     @callback
     def _handle_coordinator_update(self) -> None:
         values = _coordinator_values(self.coordinator)
         if values is None:
-            # Don't mark unavailable: keep last accumulated total visible.
             return
 
         now = dt_util.utcnow()
@@ -347,7 +422,7 @@ class _IntegratedEnergySensor(_ComfortzoneComputedBase, RestoreSensor):
 
         if self._last_sample_time is not None and self._last_power_w is not None:
             dt_seconds = (now - self._last_sample_time).total_seconds()
-            if 0 < dt_seconds < 3600:  # ignore impossibly long gaps
+            if 0 < dt_seconds < 3600:
                 avg_w = (self._last_power_w + new_power) / 2.0
                 self._accumulated_kwh += (avg_w * dt_seconds) / 3_600_000.0
 
@@ -370,7 +445,9 @@ class HeatingEnergySensor(_IntegratedEnergySensor):
     def _current_power_w(self, values):
         if not _is_heating(values):
             return 0.0
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor()) or 0.0
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        ) or 0.0
         return (
             compressor_e
             + _compute_addition_w(values)
@@ -390,7 +467,9 @@ class HotWaterEnergySensor(_IntegratedEnergySensor):
     def _current_power_w(self, values):
         if not _is_hot_water(values):
             return 0.0
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor()) or 0.0
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        ) or 0.0
         return (
             compressor_e
             + _compute_addition_w(values)
@@ -408,7 +487,9 @@ class TotalEnergySensor(_IntegratedEnergySensor):
         )
 
     def _current_power_w(self, values):
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor()) or 0.0
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        ) or 0.0
         return (
             compressor_e
             + _compute_addition_w(values)
@@ -422,15 +503,10 @@ class TotalEnergySensor(_IntegratedEnergySensor):
 
 
 class _IntegratedCostSensor(_ComfortzoneComputedBase, RestoreSensor):
-    """Accumulated cost (currency) for a per-mode power source.
-
-    Reads the current spot price from a user-configured price entity in the
-    options flow. If no price entity is configured the sensor stays unavailable.
-    """
+    """Accumulated cost (currency) for a per-mode power source."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_suggested_display_precision = 2
-    # Currency device-class lets HA pick the user's currency unit automatically.
     _attr_device_class = SensorDeviceClass.MONETARY
 
     def __init__(self, coordinator, entry, suffix, name, icon):
@@ -443,7 +519,6 @@ class _IntegratedCostSensor(_ComfortzoneComputedBase, RestoreSensor):
         self._last_sample_time: Optional[datetime] = None
         self._last_power_w: Optional[float] = None
         self._attr_native_value = 0.0
-        # Set from the user's HA config or default to SEK; HA picks currency.
         self._attr_native_unit_of_measurement = "SEK"
 
     async def async_added_to_hass(self) -> None:
@@ -460,8 +535,10 @@ class _IntegratedCostSensor(_ComfortzoneComputedBase, RestoreSensor):
         raise NotImplementedError
 
     def _current_price_per_kwh(self) -> Optional[float]:
-        """Return current price in SEK per kWh, or None if not configured/available."""
-        price_entity = self.entry.options.get(CONF_PRICE_ENTITY)
+        """Return current price in SEK/kWh, or None if not configured."""
+        price_entity = self.entry.options.get(CONF_PRICE_ENTITY) or self.entry.data.get(
+            CONF_PRICE_ENTITY
+        )
         if not price_entity:
             return None
         state = self.hass.states.get(price_entity)
@@ -471,9 +548,10 @@ class _IntegratedCostSensor(_ComfortzoneComputedBase, RestoreSensor):
             value = float(state.state)
         except (TypeError, ValueError):
             return None
-        # If the price is reported in öre (default for Nord Pool helpers in Sweden),
-        # divide by 100 to convert to SEK.
-        if self.entry.options.get(CONF_PRICE_IN_ORE, True):
+        in_ore = self.entry.options.get(CONF_PRICE_IN_ORE)
+        if in_ore is None:
+            in_ore = self.entry.data.get(CONF_PRICE_IN_ORE, False)
+        if in_ore:
             value /= 100.0
         return value
 
@@ -515,7 +593,9 @@ class HeatingCostSensor(_IntegratedCostSensor):
     def _current_power_w(self, values):
         if not _is_heating(values):
             return 0.0
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor()) or 0.0
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        ) or 0.0
         return (
             compressor_e
             + _compute_addition_w(values)
@@ -535,7 +615,9 @@ class HotWaterCostSensor(_IntegratedCostSensor):
     def _current_power_w(self, values):
         if not _is_hot_water(values):
             return 0.0
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor()) or 0.0
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        ) or 0.0
         return (
             compressor_e
             + _compute_addition_w(values)
@@ -543,11 +625,15 @@ class HotWaterCostSensor(_IntegratedCostSensor):
         )
 
 
-# --- COP (instantaneous) ---------------------------------------------------
+# --- Instant COP -----------------------------------------------------------
 
 
 class InstantCopSensor(_ComfortzoneComputedBase):
-    """Instantaneous coefficient of performance: thermal_out / electrical_in."""
+    """Instantaneous coefficient of performance: thermal_out / electrical_in.
+
+    Reports unavailable when estimated electrical input is below
+    MIN_ELECTRICAL_FOR_COP_W to avoid noise from idle / standby periods.
+    """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 2
@@ -559,7 +645,248 @@ class InstantCopSensor(_ComfortzoneComputedBase):
             suffix="instant_cop",
             name="Instant COP",
             icon="mdi:speedometer",
-            enabled_by_default=False,
+        )
+        self._attr_native_value: float | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None or not _compressor_active(values):
+            self._attr_available = False
+            self._attr_native_value = None
+            self.async_write_ha_state()
+            return
+        thermal = _read_float(values, CLEAR_TEXT_NAMES["TOTAL_POWER"])
+        compressor_e = _compute_compressor_electrical_w(
+            values, self._compressor_factor_override()
+        )
+        addition = _compute_addition_w(values)
+        circ = _compute_circulation_pump_w(values)
+        electrical_in = (compressor_e or 0.0) + addition + circ
+        if thermal is None or electrical_in < MIN_ELECTRICAL_FOR_COP_W:
+            self._attr_native_value = None
+            self._attr_available = False
+        else:
+            self._attr_native_value = round(thermal / electrical_in, 2)
+            self._attr_available = True
+        self.async_write_ha_state()
+
+
+# --- Cycle counter ---------------------------------------------------------
+
+
+class _RisingEdgeCounter(_ComfortzoneComputedBase, RestoreSensor):
+    """Generic counter that increments on a 0→1 transition of a predicate."""
+
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, coordinator, entry, suffix, name, icon):
+        super().__init__(coordinator, entry, suffix=suffix, name=name, icon=icon)
+        self._count: int = 0
+        self._last_was_active: bool = False
+        self._attr_native_value = 0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._count = int(float(last.native_value))
+                self._attr_native_value = self._count
+            except (TypeError, ValueError):
+                self._count = 0
+
+    def _is_active(self, values: list) -> bool:
+        raise NotImplementedError
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None:
+            return
+        is_active = self._is_active(values)
+        if is_active and not self._last_was_active:
+            self._count += 1
+            self._attr_native_value = self._count
+            self.async_write_ha_state()
+        self._last_was_active = is_active
+        self._attr_available = True
+
+
+class CompressorCycleCounter(_RisingEdgeCounter):
+    """Total number of compressor start cycles since installation."""
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="compressor_cycle_count",
+            name="Compressor cycle count",
+            icon="mdi:counter",
+        )
+
+    def _is_active(self, values):
+        return _compressor_active(values)
+
+
+class DefrostCycleCounter(_RisingEdgeCounter):
+    """Total number of detected defrost cycles."""
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="defrost_cycle_count",
+            name="Defrost cycle count",
+            icon="mdi:snowflake-melt",
+        )
+
+    def _is_active(self, values):
+        return _is_defrosting(values)
+
+
+# --- Last defrost duration ------------------------------------------------
+
+
+class LastDefrostDurationSensor(_ComfortzoneComputedBase, RestoreSensor):
+    """Duration of the most recent defrost cycle, in minutes."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_suggested_display_precision = 1
+    _attr_device_class = SensorDeviceClass.DURATION
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="last_defrost_duration",
+            name="Last defrost duration",
+            icon="mdi:snowflake-melt",
+        )
+        self._defrost_started: Optional[datetime] = None
+        self._last_was_defrost: bool = False
+        self._attr_native_value: float | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._attr_native_value = float(last.native_value)
+            except (TypeError, ValueError):
+                self._attr_native_value = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None:
+            return
+        now = dt_util.utcnow()
+        is_defrost = _is_defrosting(values)
+        if is_defrost and not self._last_was_defrost:
+            self._defrost_started = now
+        elif not is_defrost and self._last_was_defrost and self._defrost_started:
+            duration_min = (now - self._defrost_started).total_seconds() / 60.0
+            self._attr_native_value = round(duration_min, 2)
+            self._defrost_started = None
+            self.async_write_ha_state()
+        self._last_was_defrost = is_defrost
+        self._attr_available = True
+
+
+# --- Per-mode runtime ------------------------------------------------------
+
+
+class _RuntimeAccumulator(_ComfortzoneComputedBase, RestoreSensor):
+    """Cumulative time (hours) spent with a predicate active."""
+
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator, entry, suffix, name, icon):
+        super().__init__(coordinator, entry, suffix=suffix, name=name, icon=icon)
+        self._accumulated_hours: float = 0.0
+        self._last_sample_time: Optional[datetime] = None
+        self._last_was_active: bool = False
+        self._attr_native_value = 0.0
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._accumulated_hours = float(last.native_value)
+                self._attr_native_value = self._accumulated_hours
+            except (TypeError, ValueError):
+                self._accumulated_hours = 0.0
+
+    def _is_active(self, values: list) -> bool:
+        raise NotImplementedError
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None:
+            return
+        now = dt_util.utcnow()
+        is_active = self._is_active(values)
+        if self._last_sample_time and self._last_was_active:
+            dt_s = (now - self._last_sample_time).total_seconds()
+            if 0 < dt_s < 3600:
+                self._accumulated_hours += dt_s / 3600.0
+        self._last_sample_time = now
+        self._last_was_active = is_active
+        self._attr_native_value = round(self._accumulated_hours, 4)
+        self._attr_available = True
+        self.async_write_ha_state()
+
+
+class HeatingRuntimeSensor(_RuntimeAccumulator):
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="heating_runtime",
+            name="Heating runtime",
+            icon="mdi:radiator",
+        )
+
+    def _is_active(self, values):
+        return _is_heating(values)
+
+
+class HotWaterRuntimeSensor(_RuntimeAccumulator):
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="hot_water_runtime",
+            name="Hot water runtime",
+            icon="mdi:water-boiler",
+        )
+
+    def _is_active(self, values):
+        return _is_hot_water(values)
+
+
+# --- Heating circuit ΔT ----------------------------------------------------
+
+
+class HeatingCircuitDeltaTSensor(_ComfortzoneComputedBase):
+    """Flow minus return temperature on the space-heating loop (°C).
+
+    Healthy delta is roughly 3-7 °C while heating; values < 2 °C suggest
+    excessive circulation, > 8 °C suggests a clogged filter or air pocket.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="heating_circuit_delta_t",
+            name="Heating circuit ΔT",
+            icon="mdi:thermometer-chevron-up",
         )
         self._attr_native_value: float | None = None
 
@@ -571,17 +898,232 @@ class InstantCopSensor(_ComfortzoneComputedBase):
             self._attr_native_value = None
             self.async_write_ha_state()
             return
-        thermal = _read_float(values, CLEAR_TEXT_NAMES["TOTAL_POWER"])
-        compressor_e = _compute_compressor_electrical_w(values, self._compressor_factor())
-        addition = _compute_addition_w(values)
-        circ = _compute_circulation_pump_w(values)
-        electrical_in = (compressor_e or 0.0) + addition + circ
-        if thermal is None or electrical_in <= 0:
+        flow = _read_float(values, CLEAR_TEXT_NAMES["FLOW_TEMP"])
+        ret = _read_float(values, CLEAR_TEXT_NAMES["RETURN_TEMP"])
+        if flow is None or ret is None:
+            self._attr_available = False
+            self._attr_native_value = None
+        else:
+            self._attr_native_value = round(flow - ret, 2)
+            self._attr_available = True
+        self.async_write_ha_state()
+
+
+# --- Tank decay rate -------------------------------------------------------
+
+
+class TankDecayRateSensor(_ComfortzoneComputedBase):
+    """How fast the hot water tank loses heat (°C / hour) while idle.
+
+    Tracks samples of (timestamp, hot_water_temp) over a short window and
+    computes the slope only when the pump is **not** producing hot water.
+    Useful as a real-world proxy for tank standing losses and a heuristic
+    for shower detection (a sharp drop = water being drawn).
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "°C/h"
+    _attr_suggested_display_precision = 2
+    _attr_icon = "mdi:water-thermometer"
+
+    WINDOW_SECONDS = 30 * 60  # 30 minutes of history
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="tank_decay_rate",
+            name="Tank decay rate",
+            icon="mdi:water-thermometer",
+            enabled_by_default=False,
+        )
+        self._samples: Deque[Tuple[datetime, float]] = deque()
+        self._attr_native_value: float | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None:
+            return
+        now = dt_util.utcnow()
+        hw_temp = _read_float(values, CLEAR_TEXT_NAMES["HOT_WATER_TEMP"])
+        if hw_temp is None:
+            return
+
+        # Append and drop entries older than the window
+        self._samples.append((now, hw_temp))
+        cutoff = now.timestamp() - self.WINDOW_SECONDS
+        while self._samples and self._samples[0][0].timestamp() < cutoff:
+            self._samples.popleft()
+
+        # Only compute decay when *not* actively producing hot water
+        if _is_hot_water(values):
+            return
+
+        if len(self._samples) < 2:
+            return
+        first_t, first_v = self._samples[0]
+        delta_h = (now - first_t).total_seconds() / 3600.0
+        if delta_h <= 0.05:
+            return  # not enough span yet
+        rate = (hw_temp - first_v) / delta_h  # negative = cooling
+        self._attr_native_value = round(rate, 3)
+        self._attr_available = True
+        self.async_write_ha_state()
+
+
+# --- Specific heating energy ----------------------------------------------
+
+
+class SpecificHeatingEnergySensor(_ComfortzoneComputedBase, RestoreSensor):
+    """Estimate of how many kWh are required per °C indoor temperature rise.
+
+    Only updates while the pump is in heating mode. Uses an exponential
+    moving average to smooth the noisy ratio of (energy delta / indoor
+    delta) over short observation windows.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "kWh/°C"
+    _attr_suggested_display_precision = 2
+    EMA_ALPHA = 0.15
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="specific_heating_energy",
+            name="Specific heating energy",
+            icon="mdi:home-thermometer",
+            enabled_by_default=False,
+        )
+        self._anchor_indoor: Optional[float] = None
+        self._anchor_kwh: float = 0.0
+        self._kwh_total: float = 0.0
+        self._last_sample_time: Optional[datetime] = None
+        self._last_power_w: Optional[float] = None
+        self._ema: Optional[float] = None
+        self._attr_native_value: float | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._ema = float(last.native_value)
+                self._attr_native_value = self._ema
+            except (TypeError, ValueError):
+                self._ema = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None:
+            return
+        now = dt_util.utcnow()
+        indoor = _read_float(values, CLEAR_TEXT_NAMES["INDOOR_TEMP"])
+        if indoor is None:
+            return
+
+        # Maintain a running heating-energy total (mirrors the global energy sensor)
+        if _is_heating(values):
+            compressor_e = _compute_compressor_electrical_w(
+                values, self._compressor_factor_override()
+            ) or 0.0
+            new_power = (
+                compressor_e
+                + _compute_addition_w(values)
+                + _compute_circulation_pump_w(values)
+            )
+        else:
+            new_power = 0.0
+
+        if self._last_sample_time and self._last_power_w is not None:
+            dt_s = (now - self._last_sample_time).total_seconds()
+            if 0 < dt_s < 3600:
+                avg_w = (self._last_power_w + new_power) / 2.0
+                self._kwh_total += (avg_w * dt_s) / 3_600_000.0
+        self._last_sample_time = now
+        self._last_power_w = new_power
+
+        if not _is_heating(values):
+            # Pump idle / making HW: anchor needs reset before next heating window
+            self._anchor_indoor = None
+            return
+
+        if self._anchor_indoor is None:
+            self._anchor_indoor = indoor
+            self._anchor_kwh = self._kwh_total
+            return
+
+        delta_t = indoor - self._anchor_indoor
+        delta_kwh = self._kwh_total - self._anchor_kwh
+        if delta_t >= 0.3 and delta_kwh > 0.05:
+            ratio = delta_kwh / delta_t
+            self._ema = (
+                ratio if self._ema is None else self.EMA_ALPHA * ratio + (1 - self.EMA_ALPHA) * self._ema
+            )
+            self._attr_native_value = round(self._ema, 3)
+            self._attr_available = True
+            self.async_write_ha_state()
+            # Slide the anchor forward so we keep measuring fresh windows
+            self._anchor_indoor = indoor
+            self._anchor_kwh = self._kwh_total
+
+
+# --- Reduced fan diagnostics ----------------------------------------------
+
+
+class ReducedFanScheduleSensor(_ComfortzoneComputedBase):
+    """Diagnostic sensor showing the configured night/quiet fan schedule."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry, scope: str):
+        """scope is either 'weekdays' or 'weekends'."""
+        suffix = f"reduced_fan_{scope}_schedule"
+        super().__init__(
+            coordinator, entry,
+            suffix=suffix,
+            name=f"Reduced fan {scope} schedule",
+            icon="mdi:fan-clock",
+            enabled_by_default=False,
+        )
+        self._scope = scope
+        self._attr_native_value: str | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None:
+            self._attr_available = False
+            self._attr_native_value = None
+            self.async_write_ha_state()
+            return
+        prefix = "WEEKDAYS" if self._scope == "weekdays" else "WEEKENDS"
+        start_h = find_value_from_raw_data(
+            values, CLEAR_TEXT_NAMES[f"REDUCED_FAN_{prefix}_START_H"]
+        )
+        start_m = find_value_from_raw_data(
+            values, CLEAR_TEXT_NAMES[f"REDUCED_FAN_{prefix}_START_M"]
+        )
+        stop_h = find_value_from_raw_data(
+            values, CLEAR_TEXT_NAMES[f"REDUCED_FAN_{prefix}_STOP_H"]
+        )
+        stop_m = find_value_from_raw_data(
+            values, CLEAR_TEXT_NAMES[f"REDUCED_FAN_{prefix}_STOP_M"]
+        )
+        if all(v is not None for v in (start_h, start_m, stop_h, stop_m)):
+            try:
+                self._attr_native_value = (
+                    f"{int(start_h):02d}:{int(start_m):02d}-"
+                    f"{int(stop_h):02d}:{int(stop_m):02d}"
+                )
+                self._attr_available = True
+            except (TypeError, ValueError):
+                self._attr_native_value = None
+                self._attr_available = False
+        else:
             self._attr_native_value = None
             self._attr_available = False
-        else:
-            self._attr_native_value = round(thermal / electrical_in, 2)
-            self._attr_available = True
         self.async_write_ha_state()
 
 
@@ -593,15 +1135,35 @@ def build_computed_sensors(
 ) -> list[SensorEntity]:
     """Return all computed/derived sensors for this config entry."""
     return [
+        # Status / activity
         PumpActivitySensor(coordinator, entry),
+        # Power
         TotalElectricalPowerSensor(coordinator, entry),
         AuxPowerSensor(coordinator, entry),
         HeatingPowerSensor(coordinator, entry),
         HotWaterPowerSensor(coordinator, entry),
+        # Energy (kWh, Energy panel ready)
         HeatingEnergySensor(coordinator, entry),
         HotWaterEnergySensor(coordinator, entry),
         TotalEnergySensor(coordinator, entry),
+        # Cost (currency)
         HeatingCostSensor(coordinator, entry),
         HotWaterCostSensor(coordinator, entry),
+        # Performance / efficiency
         InstantCopSensor(coordinator, entry),
+        # Wear / cycling
+        CompressorCycleCounter(coordinator, entry),
+        DefrostCycleCounter(coordinator, entry),
+        LastDefrostDurationSensor(coordinator, entry),
+        # Per-mode runtime
+        HeatingRuntimeSensor(coordinator, entry),
+        HotWaterRuntimeSensor(coordinator, entry),
+        # Diagnostics on the heating loop
+        HeatingCircuitDeltaTSensor(coordinator, entry),
+        # Tank dynamics & house thermal performance
+        TankDecayRateSensor(coordinator, entry),
+        SpecificHeatingEnergySensor(coordinator, entry),
+        # Diagnostics: night fan schedule
+        ReducedFanScheduleSensor(coordinator, entry, "weekdays"),
+        ReducedFanScheduleSensor(coordinator, entry, "weekends"),
     ]

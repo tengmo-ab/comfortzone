@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
+from datetime import datetime
+from typing import Deque, Optional, Tuple
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -12,8 +15,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .api import find_value_from_raw_data
+from .computed_sensors import _coordinator_values, _is_hot_water, _read_float
 from .const import BINARY_SENSOR_MAP, CLEAR_TEXT_NAMES, DOMAIN
 from .entity import build_device_info, device_unique_id
 
@@ -117,6 +122,9 @@ async def async_setup_entry(
         }
         entities.append(ComfortzoneBinarySensorEntity(coordinator, entry, suffix, config))
 
+    # Computed/heuristic binary sensors that don't map to a single API field
+    entities.append(ShowerInProgressBinarySensor(coordinator, entry))
+
     async_add_entities(entities)
 
 
@@ -189,3 +197,96 @@ class ComfortzoneBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
 
         self._attr_available = new_availability
         self._attr_is_on = new_state if new_availability else None
+
+
+class ShowerInProgressBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Heuristic binary sensor: True when hot water is being drawn rapidly.
+
+    Watches the hot-water tank temperature for a sustained downward slope
+    while the pump is **not** producing hot water. A typical shower draws
+    enough water from a 170 L tank to drop the top sensor by 1-3 °C in a
+    few minutes, which is easy to distinguish from standing-loss decay
+    (which is closer to 0.1-0.3 °C/h).
+
+    Useful for automations: turn off pre-heat schedules, switch on a
+    bathroom fan, log shower frequency, or feed shower events into the
+    energy management project as "do not start hot water now, the tank is
+    actively being used".
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Shower in progress"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = "mdi:shower-head"
+
+    # How rapidly the tank temperature must fall to count as a draw
+    DROP_THRESHOLD_C_PER_MIN = 0.25
+    # Trailing window over which the slope is computed
+    WINDOW_SECONDS = 4 * 60
+    # Hold the "on" state for this long after slope returns to normal
+    TRAIL_SECONDS = 90
+
+    def __init__(self, coordinator: DataUpdateCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self.entry = entry
+        self._attr_unique_id = f"{device_unique_id(entry)}_shower_in_progress"
+        self._attr_device_info = build_device_info(entry)
+        self._samples: Deque[Tuple[datetime, float]] = deque()
+        self._last_active_at: Optional[datetime] = None
+        self._attr_is_on = False
+        self._attr_extra_state_attributes = {}
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        now = dt_util.utcnow()
+        if values is None:
+            self._attr_available = False
+            self.async_write_ha_state()
+            return
+
+        hw_temp = _read_float(values, CLEAR_TEXT_NAMES["HOT_WATER_TEMP"])
+        if hw_temp is None:
+            self._attr_available = False
+            self.async_write_ha_state()
+            return
+
+        # Maintain rolling window
+        self._samples.append((now, hw_temp))
+        cutoff = now.timestamp() - self.WINDOW_SECONDS
+        while self._samples and self._samples[0][0].timestamp() < cutoff:
+            self._samples.popleft()
+
+        slope_per_min: Optional[float] = None
+        if len(self._samples) >= 2:
+            first_t, first_v = self._samples[0]
+            span_min = (now - first_t).total_seconds() / 60.0
+            if span_min >= 0.5:
+                slope_per_min = (hw_temp - first_v) / span_min
+
+        is_drawing = (
+            slope_per_min is not None
+            and slope_per_min <= -self.DROP_THRESHOLD_C_PER_MIN
+            and not _is_hot_water(values)
+        )
+
+        if is_drawing:
+            self._last_active_at = now
+            self._attr_is_on = True
+        elif (
+            self._last_active_at
+            and (now - self._last_active_at).total_seconds() < self.TRAIL_SECONDS
+        ):
+            self._attr_is_on = True
+        else:
+            self._attr_is_on = False
+
+        self._attr_available = True
+        self._attr_extra_state_attributes = {
+            "hot_water_temp": hw_temp,
+            "slope_c_per_min": (
+                round(slope_per_min, 3) if slope_per_min is not None else None
+            ),
+            "drop_threshold_c_per_min": -self.DROP_THRESHOLD_C_PER_MIN,
+        }
+        self.async_write_ha_state()

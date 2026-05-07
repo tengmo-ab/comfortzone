@@ -131,25 +131,38 @@ flowchart LR
 </details>
 
 <details>
-<summary><b>Smarta beräknade sensorer ⭐ (nyhet i 2.1)</b></summary>
+<summary><b>Smarta beräknade sensorer ⭐ (utbyggd i 2.2)</b></summary>
 
 | Entitet | Beskrivning |
 | :-- | :-- |
-| `sensor.comfortzone_pump_activity_status` | Vad pumpen gör just nu: `Heating` / `Making Hot Water` / `Idle` |
+| `sensor.comfortzone_pump_activity_status` | `Heating` / `Making Hot Water` / `Idle` / `Defrosting` |
 | `sensor.comfortzone_estimated_total_power` | Estimerad **total el-förbrukning** (W) |
-| `sensor.comfortzone_estimated_aux_power` | Estimerad **aux-förbrukning** (fläkt + standby) – avstängd som standard |
-| `sensor.comfortzone_heating_power` | El-effekt **bara** när pumpen kör värme (W) |
-| `sensor.comfortzone_hot_water_power` | El-effekt **bara** när pumpen kör varmvatten (W) |
-| `sensor.comfortzone_heating_energy` | Ackumulerad **kWh** för värme (kompatibel med Energi-panelen) |
-| `sensor.comfortzone_hot_water_energy` | Ackumulerad **kWh** för varmvatten |
-| `sensor.comfortzone_total_energy` | Ackumulerad **kWh** totalt |
-| `sensor.comfortzone_heating_cost` | Kumulativ kostnad för värme (kräver elprissensor i options) |
-| `sensor.comfortzone_hot_water_cost` | Kumulativ kostnad för varmvatten |
-| `sensor.comfortzone_instant_cop` | Momentan COP (termisk ut / elektrisk in) – avstängd som standard |
+| `sensor.comfortzone_estimated_aux_power` | Aux (fläkt + standby) – av som standard |
+| `sensor.comfortzone_heating_power` | El bara vid värmedrift (W) |
+| `sensor.comfortzone_hot_water_power` | El bara vid varmvattenproduktion (W) |
+| `sensor.comfortzone_heating_energy` | Kumulativ kWh värme (Energi-panel) |
+| `sensor.comfortzone_hot_water_energy` | Kumulativ kWh varmvatten (Energi-panel) |
+| `sensor.comfortzone_total_energy` | Kumulativ kWh totalt |
+| `sensor.comfortzone_heating_cost` | Kumulativ kostnad värme (kräver prissensor) |
+| `sensor.comfortzone_hot_water_cost` | Kumulativ kostnad varmvatten |
+| `sensor.comfortzone_instant_cop` | Momentan COP — visas vid kompressordrift > 100 W |
+| `sensor.comfortzone_compressor_cycle_count` | Antal kompressorstarter sen install (slitageindikator) |
+| `sensor.comfortzone_defrost_cycle_count` | Antal detekterade avfrostningar |
+| `sensor.comfortzone_last_defrost_duration` | Längd på senaste avfrostning (min) |
+| `sensor.comfortzone_heating_runtime` | Total drifttid värmeläge (h) |
+| `sensor.comfortzone_hot_water_runtime` | Total drifttid VV-läge (h) |
+| `sensor.comfortzone_heating_circuit_delta_t` | Flow − Return på värmesidan (°C). Hälsosamt: 3–7°C |
+| `sensor.comfortzone_tank_decay_rate` | Hur snabbt VV-tanken tappar °C/h vid idle |
+| `sensor.comfortzone_specific_heating_energy` | kWh per °C inomhus-höjning (EMA) |
+| `sensor.comfortzone_reduced_fan_weekdays_schedule` | Diagnostik: fläktreduktions­schema veckodagar |
+| `sensor.comfortzone_reduced_fan_weekends_schedule` | Diagnostik: fläktreduktions­schema helger |
+| `binary_sensor.comfortzone_shower_in_progress` | Heuristisk dusch-detektor (snabb tappning av VV-tanken) |
 
-**Varför smart?** Frånluftsvärmepumpen har **bara en kompressor** så den kör antingen värme **eller** varmvatten – aldrig båda samtidigt. Det gör att vi kan separera el-förbrukningen per syfte och visa exakt hur mycket som går till uppvärmning vs duschvarmvatten. Energi-panelen kan sedan visa kostnad per ändamål om du anger din Nord Pool-prissensor i integrationens *Options*.
+**Termisk-till-elektrisk konvertering:** RX95-spec­bladets EN255-punkter (3,4 kW termiskt vid 0,8 kW el vid 35°C; 3,5 kW vid 1,1 kW vid 50°C) interpoleras automatiskt över aktuell flow-temp. För att override:a med en fast faktor — sätt `Compressor factor override` i Options (t.ex. `0.4` för konservativ skattning).
 
-**Tips för Energi-panelen:** Lägg till `comfortzone_heating_energy` och `comfortzone_hot_water_energy` som "Individual devices" – så får du staplade dygns-/månadskostnader uppdelade per ändamål.
+**Varför smart?** Frånluftsvärmepumpen har **bara en kompressor** → all el går till antingen värme **eller** varmvatten, aldrig båda samtidigt. Vi kan separera el-förbrukningen per syfte och föda Energi-panelen med staplade dygns- och månads­kostnader.
+
+**Tips för Energi-panelen:** Lägg till `comfortzone_heating_energy` och `comfortzone_hot_water_energy` under "Individuella enheter".
 
 </details>
 

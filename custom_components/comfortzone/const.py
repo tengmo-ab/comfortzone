@@ -15,16 +15,25 @@ CONF_PRICE_IN_ORE = "price_in_ore"
 CONF_COMPRESSOR_ELECTRICAL_FACTOR = "compressor_electrical_factor"
 
 # Defaults for derived calculations.
-# DEFAULT_COMPRESSOR_FACTOR converts the pump's reported "Compressor effect"
-# (which is thermal output) to estimated electrical input. 0.4 corresponds
-# to a working COP of approx 2.5, which is a conservative real-world value
-# that includes part-load losses; users can override via options flow.
-DEFAULT_COMPRESSOR_FACTOR = 0.4
+# DEFAULT_COMPRESSOR_FACTOR is the override value used when the user disables
+# the spec-based interpolation. 0 means "use interpolation" (the default).
+# When non-zero it acts as a constant thermal-to-electrical conversion factor.
+DEFAULT_COMPRESSOR_FACTOR = 0.0
+# Spec curve points from EN255 (Comfortzone RX95 datasheet):
+#   At 20(12)/35°C: 3,4 kW thermal / 0,8 kW electrical -> factor 0.235
+#   At 20(12)/50°C: 3,5 kW thermal / 1,1 kW electrical -> factor 0.314
+COP_SPEC_FLOW_LOW_C = 35.0
+COP_SPEC_FLOW_HIGH_C = 50.0
+COP_SPEC_FACTOR_LOW = 0.235
+COP_SPEC_FACTOR_HIGH = 0.314
 # Maximum nameplate ratings used to convert reported speeds (%) to watts.
 CIRCULATION_PUMP_MAX_W = 75
 FAN_MAX_W = 83
 # Constant standby draw of the controller, fan PCB, sensors etc.
 STANDBY_W = 15
+# Minimum estimated electrical input (W) below which COP becomes too noisy
+# to report meaningfully. Keeps the instant COP sensor sane near idle.
+MIN_ELECTRICAL_FOR_COP_W = 100
 
 # Target temp value used to signify "OFF" mode for the climate entity
 TEMP_VALUE_FOR_OFF = 10.0
@@ -71,6 +80,21 @@ CLEAR_TEXT_NAMES = {
     "COOLING_ENABLED": "Cooling enabled",
     "DUAL_HEATING_CURVES": "Dual heating curves",
     "HEATER_ELEMENT_ALLOWED": "Heater element allowed",
+    # Refrigerant circuit diagnostics
+    "HOT_GAS_TEMP": "Hot gas temp (TE4)",
+    "CONDENSER_OUT_TEMP": "Condenser out (TE5)",
+    "EVAPORATOR_IN_TEMP": "Evaporator in (TE6)",
+    # Reduced fan schedule (read-only diagnostic)
+    "REDUCED_FAN_WEEKDAYS": "Reduced fan Weekdays (on/off)",
+    "REDUCED_FAN_WEEKDAYS_START_H": "Reduced fan Weekdays start hour",
+    "REDUCED_FAN_WEEKDAYS_START_M": "Reduced fan Weekdays start minute",
+    "REDUCED_FAN_WEEKDAYS_STOP_H": "Reduced fan Weekdays stop hour",
+    "REDUCED_FAN_WEEKDAYS_STOP_M": "Reduced fan Weekdays stop minute",
+    "REDUCED_FAN_WEEKENDS": "Reduced fan Weekends (on/off)",
+    "REDUCED_FAN_WEEKENDS_START_H": "Reduced fan Weekends start hour",
+    "REDUCED_FAN_WEEKENDS_START_M": "Reduced fan Weekends start minute",
+    "REDUCED_FAN_WEEKENDS_STOP_H": "Reduced fan Weekends stop hour",
+    "REDUCED_FAN_WEEKENDS_STOP_M": "Reduced fan Weekends stop minute",
 }
 
 # Maps binary_sensor suffix -> ClearTextName

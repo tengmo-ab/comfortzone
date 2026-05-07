@@ -10,6 +10,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import callback
+from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
@@ -32,13 +33,12 @@ _LOGGER = logging.getLogger(__name__)
 
 MODELS = ["RX95", "Other"]
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_API_KEY): str,
-        vol.Required(CONF_DEVICE_ID): int,
-        vol.Required(CONF_MODEL, default="RX95"): vol.In(MODELS),
-    }
-)
+
+def _price_entity_selector():
+    """Return an EntitySelector restricted to sensors with a numeric state."""
+    return selector.EntitySelector(
+        selector.EntitySelectorConfig(domain="sensor")
+    )
 
 
 class ComfortzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -85,14 +85,36 @@ class ComfortzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
 
             if not errors:
+                # Pull optional cost-related fields out of user_input and
+                # store them as options rather than core data, so that
+                # they can be edited later via the options flow without
+                # rewriting auth credentials.
+                core_data = {
+                    CONF_API_KEY: user_input[CONF_API_KEY],
+                    CONF_DEVICE_ID: user_input[CONF_DEVICE_ID],
+                    CONF_MODEL: user_input[CONF_MODEL],
+                }
+                option_data: dict[str, Any] = {}
+                if user_input.get(CONF_PRICE_ENTITY):
+                    option_data[CONF_PRICE_ENTITY] = user_input[CONF_PRICE_ENTITY]
+                if CONF_PRICE_IN_ORE in user_input:
+                    option_data[CONF_PRICE_IN_ORE] = user_input[CONF_PRICE_IN_ORE]
                 return self.async_create_entry(
                     title=f"Comfortzone Heat Pump ({device_id_str})",
-                    data=user_input,
+                    data=core_data,
+                    options=option_data,
                 )
 
-        return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_API_KEY): str,
+                vol.Required(CONF_DEVICE_ID): int,
+                vol.Required(CONF_MODEL, default="RX95"): vol.In(MODELS),
+                vol.Optional(CONF_PRICE_ENTITY): _price_entity_selector(),
+                vol.Optional(CONF_PRICE_IN_ORE, default=False): bool,
+            }
         )
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
@@ -103,12 +125,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Persist the model on the entry data (used by device_info / branding)
             new_data = {**self.config_entry.data}
             if CONF_MODEL in user_input:
                 new_data[CONF_MODEL] = user_input[CONF_MODEL]
 
-            # Strip empty strings so unset fields are stored as missing
             options = {
                 key: value
                 for key, value in user_input.items()
@@ -124,24 +144,34 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         current_model = self.config_entry.data.get(CONF_MODEL, "RX95")
         opts = self.config_entry.options
-        options_schema = vol.Schema(
-            {
-                vol.Required(CONF_MODEL, default=current_model): vol.In(MODELS),
-                vol.Optional(
-                    CONF_PRICE_ENTITY,
-                    default=opts.get(CONF_PRICE_ENTITY, ""),
-                ): str,
-                vol.Optional(
-                    CONF_PRICE_IN_ORE,
-                    default=opts.get(CONF_PRICE_IN_ORE, True),
-                ): bool,
-                vol.Optional(
-                    CONF_COMPRESSOR_ELECTRICAL_FACTOR,
-                    default=opts.get(
-                        CONF_COMPRESSOR_ELECTRICAL_FACTOR, DEFAULT_COMPRESSOR_FACTOR
-                    ),
-                ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=1.0)),
-            }
+        # The previous user step may have stashed the price entity in data;
+        # support both locations as the source of the current value.
+        current_price_entity = opts.get(CONF_PRICE_ENTITY) or self.config_entry.data.get(
+            CONF_PRICE_ENTITY, ""
+        )
+        current_price_in_ore = opts.get(
+            CONF_PRICE_IN_ORE, self.config_entry.data.get(CONF_PRICE_IN_ORE, False)
         )
 
-        return self.async_show_form(step_id="init", data_schema=options_schema)
+        schema_dict: dict[Any, Any] = {
+            vol.Required(CONF_MODEL, default=current_model): vol.In(MODELS),
+        }
+        if current_price_entity:
+            schema_dict[
+                vol.Optional(CONF_PRICE_ENTITY, default=current_price_entity)
+            ] = _price_entity_selector()
+        else:
+            schema_dict[vol.Optional(CONF_PRICE_ENTITY)] = _price_entity_selector()
+        schema_dict[
+            vol.Optional(CONF_PRICE_IN_ORE, default=current_price_in_ore)
+        ] = bool
+        schema_dict[
+            vol.Optional(
+                CONF_COMPRESSOR_ELECTRICAL_FACTOR,
+                default=opts.get(
+                    CONF_COMPRESSOR_ELECTRICAL_FACTOR, DEFAULT_COMPRESSOR_FACTOR
+                ),
+            )
+        ] = vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0))
+
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema_dict))
