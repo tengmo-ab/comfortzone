@@ -18,7 +18,15 @@ from .api import (
     ComfortzoneApiClientError,
     ComfortzoneApiCommunicationError,
 )
-from .const import CONF_DEVICE_ID, CONF_MODEL, DOMAIN
+from .const import (
+    CONF_COMPRESSOR_ELECTRICAL_FACTOR,
+    CONF_DEVICE_ID,
+    CONF_MODEL,
+    CONF_PRICE_ENTITY,
+    CONF_PRICE_IN_ORE,
+    DEFAULT_COMPRESSOR_FACTOR,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,16 +103,44 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
+            # Persist the model on the entry data (used by device_info / branding)
+            new_data = {**self.config_entry.data}
+            if CONF_MODEL in user_input:
+                new_data[CONF_MODEL] = user_input[CONF_MODEL]
+
+            # Strip empty strings so unset fields are stored as missing
+            options = {
+                key: value
+                for key, value in user_input.items()
+                if key != CONF_MODEL and value not in ("", None)
+            }
+
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
-                data={**self.config_entry.data, **user_input},
+                data=new_data,
+                options=options,
             )
             return self.async_create_entry(title="", data={})
 
         current_model = self.config_entry.data.get(CONF_MODEL, "RX95")
+        opts = self.config_entry.options
         options_schema = vol.Schema(
             {
                 vol.Required(CONF_MODEL, default=current_model): vol.In(MODELS),
+                vol.Optional(
+                    CONF_PRICE_ENTITY,
+                    default=opts.get(CONF_PRICE_ENTITY, ""),
+                ): str,
+                vol.Optional(
+                    CONF_PRICE_IN_ORE,
+                    default=opts.get(CONF_PRICE_IN_ORE, True),
+                ): bool,
+                vol.Optional(
+                    CONF_COMPRESSOR_ELECTRICAL_FACTOR,
+                    default=opts.get(
+                        CONF_COMPRESSOR_ELECTRICAL_FACTOR, DEFAULT_COMPRESSOR_FACTOR
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=1.0)),
             }
         )
 

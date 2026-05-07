@@ -31,7 +31,15 @@
                 "title": "Inställningar för Comfortzone värmepump",
                 "description": "Justera integrationens inställningar. Ändringar laddar om integrationen automatiskt.",
                 "data": {
-                    "model": "Värmepumpsmodell"
+                    "model": "Värmepumpsmodell",
+                    "price_entity": "Elprissensor (valfri)",
+                    "price_in_ore": "Prissensor rapporterar öre/kWh (avmarkera för SEK/kWh)",
+                    "compressor_electrical_factor": "Elektrisk faktor för kompressor"
+                },
+                "data_description": {
+                    "price_entity": "Entitets-ID för en elprissensor (t.ex. sensor.nord_pool_se3_price). Krävs för att kostnadssensorerna ska uppdateras.",
+                    "price_in_ore": "De flesta Nord Pool-mallar i Sverige rapporterar öre/kWh. Avmarkera om din sensor redan rapporterar SEK/kWh.",
+                    "compressor_electrical_factor": "Faktor för att räkna om rapporterad termisk effekt (W) till elektrisk in (W). Standard 0.4 ≈ COP 2.5; sänk om din pump är effektivare."
                 }
             }
         }

@@ -9,6 +9,23 @@ CONF_API_KEY = "api_key"
 CONF_DEVICE_ID = "device_id"
 CONF_MODEL = "model"
 
+# Optional configuration for cost / energy sensors
+CONF_PRICE_ENTITY = "price_entity"
+CONF_PRICE_IN_ORE = "price_in_ore"
+CONF_COMPRESSOR_ELECTRICAL_FACTOR = "compressor_electrical_factor"
+
+# Defaults for derived calculations.
+# DEFAULT_COMPRESSOR_FACTOR converts the pump's reported "Compressor effect"
+# (which is thermal output) to estimated electrical input. 0.4 corresponds
+# to a working COP of approx 2.5, which is a conservative real-world value
+# that includes part-load losses; users can override via options flow.
+DEFAULT_COMPRESSOR_FACTOR = 0.4
+# Maximum nameplate ratings used to convert reported speeds (%) to watts.
+CIRCULATION_PUMP_MAX_W = 75
+FAN_MAX_W = 83
+# Constant standby draw of the controller, fan PCB, sensors etc.
+STANDBY_W = 15
+
 # Target temp value used to signify "OFF" mode for the climate entity
 TEMP_VALUE_FOR_OFF = 10.0
 

@@ -130,6 +130,42 @@ flowchart LR
 
 </details>
 
+<details>
+<summary><b>Smarta beräknade sensorer ⭐ (nyhet i 2.1)</b></summary>
+
+| Entitet | Beskrivning |
+| :-- | :-- |
+| `sensor.comfortzone_pump_activity_status` | Vad pumpen gör just nu: `Heating` / `Making Hot Water` / `Idle` |
+| `sensor.comfortzone_estimated_total_power` | Estimerad **total el-förbrukning** (W) |
+| `sensor.comfortzone_estimated_aux_power` | Estimerad **aux-förbrukning** (fläkt + standby) – avstängd som standard |
+| `sensor.comfortzone_heating_power` | El-effekt **bara** när pumpen kör värme (W) |
+| `sensor.comfortzone_hot_water_power` | El-effekt **bara** när pumpen kör varmvatten (W) |
+| `sensor.comfortzone_heating_energy` | Ackumulerad **kWh** för värme (kompatibel med Energi-panelen) |
+| `sensor.comfortzone_hot_water_energy` | Ackumulerad **kWh** för varmvatten |
+| `sensor.comfortzone_total_energy` | Ackumulerad **kWh** totalt |
+| `sensor.comfortzone_heating_cost` | Kumulativ kostnad för värme (kräver elprissensor i options) |
+| `sensor.comfortzone_hot_water_cost` | Kumulativ kostnad för varmvatten |
+| `sensor.comfortzone_instant_cop` | Momentan COP (termisk ut / elektrisk in) – avstängd som standard |
+
+**Varför smart?** Frånluftsvärmepumpen har **bara en kompressor** så den kör antingen värme **eller** varmvatten – aldrig båda samtidigt. Det gör att vi kan separera el-förbrukningen per syfte och visa exakt hur mycket som går till uppvärmning vs duschvarmvatten. Energi-panelen kan sedan visa kostnad per ändamål om du anger din Nord Pool-prissensor i integrationens *Options*.
+
+**Tips för Energi-panelen:** Lägg till `comfortzone_heating_energy` och `comfortzone_hot_water_energy` som "Individual devices" – så får du staplade dygns-/månadskostnader uppdelade per ändamål.
+
+</details>
+
+---
+
+## ⚙️ Avancerade alternativ
+
+Öppna **Inställningar → Enheter & tjänster → Comfortzone Heat Pump → Konfigurera** för att justera:
+
+| Alternativ | Beskrivning |
+| :-- | :-- |
+| **Heat pump model** | `RX95` eller `Other` – styr enhetens märke/visning |
+| **Electricity price entity** | Entitets-ID för Nord Pool/elpris-sensor. Krävs för kostnadssensorerna. |
+| **Price reports öre/kWh** | Aktivera om prissensorn rapporterar öre (default för svenska Nord Pool-mallar) |
+| **Compressor electrical factor** | Termisk-till-elektrisk konverteringsfaktor (default 0.4 ≈ COP 2.5). Sänk för effektivare drift. |
+
 ---
 
 ## 🩺 Felsökning
@@ -154,11 +190,12 @@ flowchart LR
 ## ✨ Features
 - **Climate Entity:** Control indoor temperature, read compressor and valve states.
 - **Hot Water:** Adjust target temperature, activate extra hot water.
-- **24+ Sensors:** Indoor, outdoor, exhaust air, compressor power, frequency, fan speed, etc.
+- **30+ Sensors:** Indoor, outdoor, exhaust air, compressor power, frequency, fan speed, etc.
 - **Alarms & Status:** Filter alarm, main alarm, compressor status, valve positions (binary sensors).
 - **Settings:** Adjust heating curve and holiday days directly from your dashboard.
 - **Smart Queuing:** Built-in write queue to handle the slow Loggamera API smoothly without crashing the integration.
 - **Diagnostics:** Built-in "Download Diagnostics" with redacted API key for easy bug reporting.
+- **Energy panel ready (new in 2.1):** Per-mode kWh sensors split between *space heating* and *domestic hot water*, plus optional cost sensors via a Nord Pool price entity. Because the RX95 has a single compressor, every kWh is unambiguously attributable to one of the two purposes.
 
 ## 🚀 Installation
 

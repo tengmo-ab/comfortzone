@@ -25,6 +25,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpda
 from homeassistant.util import dt as dt_util
 
 from .api import find_value_from_raw_data
+from .computed_sensors import build_computed_sensors
 from .const import CLEAR_TEXT_NAMES, DOMAIN
 from .entity import build_device_info, device_unique_id
 
@@ -271,6 +272,7 @@ async def async_setup_entry(
     for suffix, config in SENSOR_CONFIG.items():
         if "property_read" in config:
             entities.append(ComfortzoneSensorEntity(coordinator, entry, suffix, config))
+    entities.extend(build_computed_sensors(coordinator, entry))
     async_add_entities(entities)
 
 
