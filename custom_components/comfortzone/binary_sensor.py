@@ -17,8 +17,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .api import find_value_from_raw_data
-from .computed_sensors import _coordinator_values, _is_hot_water, _read_float
+from .calculations import (
+    find_value_from_raw_data,
+    is_hot_water as _is_hot_water,
+    read_float as _read_float,
+)
+from .computed_sensors import _coordinator_values
 from .const import BINARY_SENSOR_MAP, CLEAR_TEXT_NAMES, DOMAIN
 from .entity import build_device_info, device_unique_id
 

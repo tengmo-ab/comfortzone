@@ -20,3 +20,7 @@ old_controller.yaml
 # Project documentation & tools (Not needed for HACS integration)
 docs/
 tools/
+
+# Test caches
+.pytest_cache/
+__pycache__/

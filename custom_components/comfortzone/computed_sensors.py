@@ -41,19 +41,24 @@ from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .api import find_value_from_raw_data
+from .calculations import (
+    compressor_active as _compressor_active,
+    compute_addition_w as _compute_addition_w,
+    compute_circulation_pump_w as _compute_circulation_pump_w,
+    compute_compressor_electrical_w as _compute_compressor_electrical_w,
+    compute_fan_w as _compute_fan_w,
+    find_value_from_raw_data,
+    is_defrosting as _is_defrosting,
+    is_heating as _is_heating,
+    is_hot_water as _is_hot_water,
+    read_float as _read_float,
+)
 from .const import (
-    CIRCULATION_PUMP_MAX_W,
     CLEAR_TEXT_NAMES,
     CONF_COMPRESSOR_ELECTRICAL_FACTOR,
     CONF_PRICE_ENTITY,
     CONF_PRICE_IN_ORE,
-    COP_SPEC_FACTOR_HIGH,
-    COP_SPEC_FACTOR_LOW,
-    COP_SPEC_FLOW_HIGH_C,
-    COP_SPEC_FLOW_LOW_C,
     DEFAULT_COMPRESSOR_FACTOR,
-    FAN_MAX_W,
     MIN_ELECTRICAL_FOR_COP_W,
     STANDBY_W,
 )
@@ -63,17 +68,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 # --- Helpers ---------------------------------------------------------------
-
-
-def _read_float(values_list: list, clear_text_name: str) -> Optional[float]:
-    """Read a numeric value from RawData.Values, returning None if missing/invalid."""
-    raw = find_value_from_raw_data(values_list, clear_text_name)
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
+# Most pure helpers live in calculations.py and are imported above with
+# underscore aliases so the rest of this file keeps its existing names.
 
 
 def _coordinator_values(coordinator: DataUpdateCoordinator) -> Optional[list]:
@@ -83,100 +79,6 @@ def _coordinator_values(coordinator: DataUpdateCoordinator) -> Optional[list]:
     data_block = coordinator.data.get("Data") or {}
     values = data_block.get("Values")
     return values if isinstance(values, list) else None
-
-
-def _compressor_factor_from_flow(flow_temp_c: Optional[float]) -> float:
-    """Interpolate the thermal-to-electrical factor based on flow temperature.
-
-    Anchored at the two EN255 spec points from the RX95 datasheet:
-      35°C flow → factor 0.235 (COP 4.25)
-      50°C flow → factor 0.314 (COP 3.18)
-    Below 35°C and above 50°C the curve is clamped to the nearest spec point.
-    """
-    if flow_temp_c is None:
-        # Fall back to the high (worst-case) factor when flow unknown
-        return COP_SPEC_FACTOR_HIGH
-    if flow_temp_c <= COP_SPEC_FLOW_LOW_C:
-        return COP_SPEC_FACTOR_LOW
-    if flow_temp_c >= COP_SPEC_FLOW_HIGH_C:
-        return COP_SPEC_FACTOR_HIGH
-    span = COP_SPEC_FLOW_HIGH_C - COP_SPEC_FLOW_LOW_C
-    pos = (flow_temp_c - COP_SPEC_FLOW_LOW_C) / span
-    return COP_SPEC_FACTOR_LOW + pos * (COP_SPEC_FACTOR_HIGH - COP_SPEC_FACTOR_LOW)
-
-
-def _compute_compressor_electrical_w(
-    values: list, override_factor: float
-) -> Optional[float]:
-    """Estimate compressor electrical input in W using flow-temp-based COP curve.
-
-    A non-zero override_factor (set via options) bypasses the curve and uses
-    that constant factor instead — useful when the user has empirical data.
-    """
-    thermal = _read_float(values, CLEAR_TEXT_NAMES["COMPRESSOR_POWER"])
-    if thermal is None:
-        return None
-    if override_factor and override_factor > 0:
-        return thermal * override_factor
-    flow_c = _read_float(values, CLEAR_TEXT_NAMES["FLOW_TEMP"])
-    return thermal * _compressor_factor_from_flow(flow_c)
-
-
-def _compute_circulation_pump_w(values: list) -> float:
-    """Estimate circulation pump electrical draw in W from reported speed (%)."""
-    pct = _read_float(values, CLEAR_TEXT_NAMES["CIRC_PUMP_SPEED"]) or 0.0
-    return (pct / 100.0) * CIRCULATION_PUMP_MAX_W
-
-
-def _compute_fan_w(values: list) -> float:
-    """Estimate fan electrical draw in W from reported speed (%)."""
-    pct = _read_float(values, CLEAR_TEXT_NAMES["FAN_SPEED_CURRENT"]) or 0.0
-    return (pct / 100.0) * FAN_MAX_W
-
-
-def _compute_addition_w(values: list) -> float:
-    """Read the resistive addition heater power in W (already electrical)."""
-    return _read_float(values, CLEAR_TEXT_NAMES["ADDITION_POWER"]) or 0.0
-
-
-def _compressor_active(values: list) -> bool:
-    return find_value_from_raw_data(values, CLEAR_TEXT_NAMES["COMPRESSOR_ACTIVE"]) == "1"
-
-
-def _heating_valve_open(values: list) -> bool:
-    return find_value_from_raw_data(
-        values, CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HEATING"]
-    ) == "1"
-
-
-def _hw_valve_open(values: list) -> bool:
-    return find_value_from_raw_data(
-        values, CLEAR_TEXT_NAMES["EXCHANGE_VALVE_HW"]
-    ) == "1"
-
-
-def _is_heating(values: list) -> bool:
-    """True when the pump is dedicated to space heating."""
-    return _compressor_active(values) and _heating_valve_open(values)
-
-
-def _is_hot_water(values: list) -> bool:
-    """True when the pump is dedicated to hot water production."""
-    return _compressor_active(values) and _hw_valve_open(values)
-
-
-def _is_defrosting(values: list) -> bool:
-    """Heuristic: compressor running but neither valve open ⇒ defrost cycle.
-
-    On the RX95 the exchange valves switch between heating and hot-water
-    duty. When the pump enters a defrost / pressure-equalisation cycle both
-    valves close while the compressor continues to run.
-    """
-    return (
-        _compressor_active(values)
-        and not _heating_valve_open(values)
-        and not _hw_valve_open(values)
-    )
 
 
 # --- Base classes ----------------------------------------------------------

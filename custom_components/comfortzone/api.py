@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 import aiohttp
 
+# Re-export the pure helper so existing imports keep working.
+from .calculations import find_value_from_raw_data  # noqa: F401
 from .const import API_ENDPOINT, API_ENDPOINT_SET
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,21 +20,6 @@ DEFAULT_HEADERS = {"Content-Type": "application/json"}
 MIN_WRITE_SPACING_SEC = 5.0
 RETRY_DELAY_SEC = 60
 MAX_WRITE_ATTEMPTS = 2
-
-
-def find_value_from_raw_data(
-    values_list: Optional[list[dict[str, Any]]],
-    identifier: str,
-    key_to_match: str = "ClearTextName",
-) -> Optional[str]:
-    """Return the 'Value' string from the RawData list matching `identifier`."""
-    if not values_list:
-        return None
-    for item in values_list:
-        if isinstance(item, dict) and item.get(key_to_match) == identifier:
-            return item.get("Value")
-    _LOGGER.debug("Identifier '%s' not found in raw data using key '%s'", identifier, key_to_match)
-    return None
 
 
 class ComfortzoneApiClientError(Exception):

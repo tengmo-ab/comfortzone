@@ -3,6 +3,23 @@
 All notable changes to the Comfortzone Heat Pump integration are documented here.
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- New `calculations.py` module containing all pure derivation helpers
+  (factor curve, RawData parsing, mode predicates) — independently
+  importable and unit-testable without Home Assistant installed.
+- `tests/` directory with 23 pytest cases covering the spec-based COP
+  curve, mode predicates, and the API client's retry / spacing behaviour
+  including a concurrent-write scenario that proves the internal write
+  lock keeps HTTP calls strictly sequential.
+
+### Changed
+- `api.py` and `computed_sensors.py` now import their helpers from
+  `calculations.py`. No behaviour change; the existing
+  `from .api import find_value_from_raw_data` continues to work via a
+  re-export.
+
 ## [2.2.0] – 2026-05-07
 
 ### Added
