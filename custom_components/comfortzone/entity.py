@@ -26,7 +26,9 @@ def build_device_info(entry: ConfigEntry) -> DeviceInfo:
         manufacturer="Comfortzone",
         model=model,
         name=f"Comfortzone {model}",
-        configuration_url="https://platform.loggamera.se",
+        # The "Visit" button on the device page should send users to the
+        # human-facing Loggamera portal, not the API host.
+        configuration_url="https://portal.loggamera.se",
     )
 
 

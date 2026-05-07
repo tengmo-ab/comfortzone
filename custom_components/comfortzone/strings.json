@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Connect your Comfortzone heat pump",
-                "description": "This integration uses the **Loggamera** cloud API to read and control your heat pump.\n\n**What you need before continuing:**\n\n1. 🔑 **API key** — log in to the [Loggamera portal](https://platform.loggamera.se), open your account settings and generate or copy an API key.\n2. 🔢 **Device ID** — open your heat pump in the portal and copy the numeric ID (visible in the URL or device details).\n3. 🏷️ **Model** — pick `RX95` for a Comfortzone RX95 (or `Other`). You can change this later.\n4. 💸 **(Optional) Electricity price entity** — pick a Nord Pool / electricity price sensor. If you set this, per-mode cost sensors (heating cost / hot water cost) start tracking immediately.\n\nThe integration polls every minute. The first refresh after setup may take a few seconds because the Loggamera API is sometimes slow.",
+                "description": "This integration uses the **Loggamera** cloud API to read and control your heat pump.\n\n**What you need before continuing:**\n\n1. 🔑 **API key** — log in to the [Loggamera portal](https://portal.loggamera.se), open your account settings and generate or copy an API key.\n2. 🔢 **Device ID** — open your heat pump in the portal and copy the numeric ID (visible in the URL or device details).\n3. 🏷️ **Model** — pick `RX95` for a Comfortzone RX95 (or `Other`). You can change this later.\n4. 💸 **(Optional) Electricity price entity** — pick a Nord Pool / electricity price sensor. If you set this, per-mode cost sensors (heating cost / hot water cost) start tracking immediately.\n\nThe integration polls every minute. The first refresh after setup may take a few seconds because the Loggamera API is sometimes slow.",
                 "data": {
                     "api_key": "Loggamera API key",
                     "device_id": "Loggamera Device ID",
@@ -21,7 +21,7 @@
             }
         },
         "error": {
-            "cannot_connect": "Could not reach the Loggamera API. Check your internet connection and that platform.loggamera.se is online, then try again.",
+            "cannot_connect": "Could not reach the Loggamera API. Check your internet connection and that portal.loggamera.se is online, then try again.",
             "invalid_auth": "Authentication failed. Double-check the API key and Device ID — both must belong to the same Loggamera account.",
             "unknown": "Something unexpected happened during validation. See Home Assistant logs for details."
         },
