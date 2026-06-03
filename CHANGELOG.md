@@ -3,6 +3,31 @@
 All notable changes to the Comfortzone Heat Pump integration are documented here.
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.9.0] – 2026-06-03
+
+### Fixed
+- **HACS dashboard icon** — `hacs.json` now declares an `icon` URL so
+  HACS can render the integration's logo in the dashboard listing
+  instead of a blank tile. The HA device-page icon was already served
+  from `brand/icon.png` via HA 2026.3+'s local brand mechanism.
+- **Shower detection rewritten to be mode-aware.** The previous logic
+  suppressed detection completely while the pump was producing hot
+  water and used a single fixed slope threshold. Real-world data showed
+  this missed obvious draws (e.g. a 14 °C tank drop over 45 minutes
+  that never triggered). The new detector compares the **actual** tank
+  slope against the **expected** slope given the pump's current
+  activity:
+  - Idle / heating: expected ~−0.05 °C/min (standing losses)
+  - Making hot water: expected ~+0.40 °C/min (active production)
+  An alarm fires when the actual slope falls more than 0.20 °C/min
+  below expected AND the tank has actually dropped ≥ 0.5 °C in the
+  rolling 5-minute window. This catches showers during HW production
+  (when the tank is being recharged) and ignores transient sensor
+  blips. The trailing on-window is also bumped from 90 s to 120 s.
+- Sensor attributes now expose `actual slope`, `expected slope`,
+  `deviation`, `absolute drop` and `pump_making_hot_water` so it's
+  easy to see exactly why the alarm did or didn't fire.
+
 ## [2.8.0] – 2026-05-18
 
 ### Changed — electrical-input estimation recalibrated

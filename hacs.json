@@ -1,5 +1,7 @@
 {
     "name": "Comfortzone Heat Pump",
+    "icon": "https://raw.githubusercontent.com/tengmo-ab/comfortzone/main/custom_components/comfortzone/brand/icon.png",
     "render_readme": true,
-    "homeassistant": "2024.10.0"
+    "homeassistant": "2024.10.0",
+    "zip_release": false
 }

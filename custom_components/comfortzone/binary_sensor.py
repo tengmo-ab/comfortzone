@@ -246,16 +246,23 @@ class ComfortzoneBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
 class ShowerInProgressBinarySensor(CoordinatorEntity, BinarySensorEntity):
     """Heuristic binary sensor: True when hot water is being drawn rapidly.
 
-    Watches the hot-water tank temperature for a sustained downward slope
-    while the pump is **not** producing hot water. A typical shower draws
-    enough water from a 170 L tank to drop the top sensor by 1-3 °C in a
-    few minutes, which is easy to distinguish from standing-loss decay
-    (which is closer to 0.1-0.3 °C/h).
+    The detection compares the **actual** tank-temperature slope against
+    the slope we'd **expect** given what the heat pump is doing right now:
+
+    * When idle, the tank loses ~0.05 °C/min from standing losses. Anything
+      meaningfully faster than that is water being drawn.
+    * When the pump is producing hot water, the tank should be rising
+      by roughly 0.3-0.6 °C/min. A near-flat or slightly negative slope
+      during production is a strong signal of a shower beating the
+      production rate.
+
+    The trigger condition is therefore "actual slope falls more than
+    ``DEVIATION_THRESHOLD_C_PER_MIN`` below the expected slope", combined
+    with a small absolute-drop guard to suppress sensor-noise blips.
 
     Useful for automations: turn off pre-heat schedules, switch on a
     bathroom fan, log shower frequency, or feed shower events into the
-    energy management project as "do not start hot water now, the tank is
-    actively being used".
+    energy management project as "the tank is actively being used".
     """
 
     _attr_has_entity_name = True
@@ -263,12 +270,27 @@ class ShowerInProgressBinarySensor(CoordinatorEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = "mdi:shower-head"
 
-    # How rapidly the tank temperature must fall to count as a draw
-    DROP_THRESHOLD_C_PER_MIN = 0.25
-    # Trailing window over which the slope is computed
-    WINDOW_SECONDS = 4 * 60
-    # Hold the "on" state for this long after slope returns to normal
-    TRAIL_SECONDS = 90
+    # Expected slope of the tank-temperature reading in °C/min.
+    # Negative = cooling, positive = warming. Calibrated against
+    # observed RX95 behaviour on a 170 L tank.
+    EXPECTED_SLOPE_IDLE = -0.05
+    EXPECTED_SLOPE_HW_PRODUCTION = 0.40
+
+    # Actual slope must fall this many °C/min *below* expected before
+    # we count it as water being drawn. Larger negative number = stricter.
+    DEVIATION_THRESHOLD_C_PER_MIN = -0.20
+
+    # The tank must actually have dropped at least this much over the
+    # rolling window before the alarm fires — protects against the
+    # occasional single-poll temperature blip.
+    MIN_ABSOLUTE_DROP_C = 0.5
+
+    # Sliding window for slope computation.
+    WINDOW_SECONDS = 5 * 60
+
+    # Hold the "on" state for this long after the slope clears the
+    # threshold, so the sensor doesn't toggle off briefly between draws.
+    TRAIL_SECONDS = 120
 
     def __init__(self, coordinator: DataUpdateCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
@@ -302,16 +324,29 @@ class ShowerInProgressBinarySensor(CoordinatorEntity, BinarySensorEntity):
             self._samples.popleft()
 
         slope_per_min: Optional[float] = None
+        absolute_drop: float = 0.0
         if len(self._samples) >= 2:
             first_t, first_v = self._samples[0]
             span_min = (now - first_t).total_seconds() / 60.0
             if span_min >= 0.5:
                 slope_per_min = (hw_temp - first_v) / span_min
+                # Positive when the window contains an actual drop.
+                absolute_drop = first_v - hw_temp
+
+        pump_making_hw = _is_hot_water(values)
+        expected_slope = (
+            self.EXPECTED_SLOPE_HW_PRODUCTION
+            if pump_making_hw
+            else self.EXPECTED_SLOPE_IDLE
+        )
+        deviation = (
+            slope_per_min - expected_slope if slope_per_min is not None else None
+        )
 
         is_drawing = (
-            slope_per_min is not None
-            and slope_per_min <= -self.DROP_THRESHOLD_C_PER_MIN
-            and not _is_hot_water(values)
+            deviation is not None
+            and deviation <= self.DEVIATION_THRESHOLD_C_PER_MIN
+            and absolute_drop >= self.MIN_ABSOLUTE_DROP_C
         )
 
         if is_drawing:
@@ -331,7 +366,13 @@ class ShowerInProgressBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "slope_c_per_min": (
                 round(slope_per_min, 3) if slope_per_min is not None else None
             ),
-            "drop_threshold_c_per_min": -self.DROP_THRESHOLD_C_PER_MIN,
+            "expected_slope_c_per_min": expected_slope,
+            "deviation_c_per_min": (
+                round(deviation, 3) if deviation is not None else None
+            ),
+            "deviation_threshold_c_per_min": self.DEVIATION_THRESHOLD_C_PER_MIN,
+            "absolute_drop_c": round(absolute_drop, 2),
+            "pump_making_hot_water": pump_making_hw,
         }
         self.async_write_ha_state()
 
