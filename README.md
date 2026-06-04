@@ -143,6 +143,7 @@ flowchart LR
 | `sensor.comfortzone_heating_energy` | Kumulativ kWh värme (Energi-panel) |
 | `sensor.comfortzone_hot_water_energy` | Kumulativ kWh varmvatten (Energi-panel) |
 | `sensor.comfortzone_total_energy` | Kumulativ kWh totalt |
+| `sensor.comfortzone_addition_heater_energy` | Kumulativ kWh tillskott (Energi-panel) |
 | `sensor.comfortzone_heating_cost` | Kumulativ kostnad värme (kräver prissensor) |
 | `sensor.comfortzone_hot_water_cost` | Kumulativ kostnad varmvatten |
 | `sensor.comfortzone_instant_cop` | Momentan COP — visas vid kompressordrift > 100 W |
