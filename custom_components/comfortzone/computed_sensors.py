@@ -406,6 +406,30 @@ class TotalEnergySensor(_IntegratedEnergySensor):
         )
 
 
+class AdditionEnergySensor(_IntegratedEnergySensor):
+    """Cumulative kWh consumed by the resistive addition heater.
+
+    Integrates the ``Addition effect`` reading (which is already in
+    electrical watts) over time so the Home Assistant Energy panel can
+    track exactly how much COP-1 electricity has been used. Pairs
+    naturally with ``addition_heater_runtime`` (hours) and the
+    ``addition_heater_active`` alarm.
+    """
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="addition_heater_energy",
+            name="Addition heater energy",
+            icon="mdi:heating-coil",
+        )
+
+    def _current_power_w(self, values):
+        # Addition power is already electrical W (not thermal) so it is
+        # used directly without going through the compressor COP curve.
+        return _compute_addition_w(values)
+
+
 # --- Cost sensors ----------------------------------------------------------
 
 
@@ -1284,6 +1308,7 @@ def build_computed_sensors(
         HeatingEnergySensor(coordinator, entry),
         HotWaterEnergySensor(coordinator, entry),
         TotalEnergySensor(coordinator, entry),
+        AdditionEnergySensor(coordinator, entry),
         # Cost (currency)
         HeatingCostSensor(coordinator, entry),
         HotWaterCostSensor(coordinator, entry),

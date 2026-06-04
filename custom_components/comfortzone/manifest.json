@@ -7,7 +7,7 @@
   "requirements": [],
   "iot_class": "cloud_polling",
   "integration_type": "device",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "config_flow": true,
   "quality_scale": "silver",
   "issue_tracker": "https://github.com/tengmo-ab/comfortzone/issues"

@@ -3,6 +3,18 @@
 All notable changes to the Comfortzone Heat Pump integration are documented here.
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.10.0] – 2026-06-04
+
+### Added
+- **Addition heater energy sensor** (`addition_heater_energy`). Cumulative
+  kWh integrated from the `Addition effect` reading, with
+  `state_class: total_increasing` so the Home Assistant Energy panel
+  picks it up directly. Lets you track exactly how much COP-1 backup
+  electricity has been used over time and place it in the Energy panel
+  as an "Individual device" entry. Pairs naturally with the existing
+  `addition_heater_runtime` (hours) and `addition_heater_active`
+  (problem alarm) sensors.
+
 ## [2.9.0] – 2026-06-03
 
 ### Fixed
