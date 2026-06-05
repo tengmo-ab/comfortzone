@@ -25,6 +25,17 @@ CONF_LOW_HW_HYSTERESIS_C = "low_hw_hysteresis_c"
 CONF_MAX_LOAD_THRESHOLD_PCT = "max_load_threshold_pct"
 CONF_MAX_LOAD_DURATION_S = "max_load_duration_s"
 
+# Large-hot-water-draw detection (the sensor formerly called "shower in
+# progress"). The threshold is expressed in °C of accumulated "missing heat":
+# how far the tank temperature falls short of where the pump's current mode
+# says it should be, integrated over time. See LargeHotWaterDrawBinarySensor.
+CONF_LARGE_DRAW_THRESHOLD_C = "large_draw_threshold_c"
+# Cycle-length heuristic: a completed hot-water production cycle longer than
+# this many minutes is flagged "unusually long" (suggests a draw happened
+# while the pump was already producing — a shower the tank temperature can't
+# see directly).
+CONF_LONG_HW_CYCLE_MIN = "long_hw_cycle_min"
+
 DEFAULT_SHORT_CYCLE_THRESHOLD = 6
 DEFAULT_ADDITION_POWER_THRESHOLD_W = 500
 DEFAULT_ADDITION_DURATION_THRESHOLD_S = 600  # 10 minutes
@@ -33,6 +44,8 @@ DEFAULT_LOW_HW_THRESHOLD_C = 40.0
 DEFAULT_LOW_HW_HYSTERESIS_C = 3.0
 DEFAULT_MAX_LOAD_THRESHOLD_PCT = 90
 DEFAULT_MAX_LOAD_DURATION_S = 300  # 5 minutes
+DEFAULT_LARGE_DRAW_THRESHOLD_C = 3.0
+DEFAULT_LONG_HW_CYCLE_MIN = 50.0
 
 # Defaults for derived calculations.
 # DEFAULT_COMPRESSOR_FACTOR is the override value used when the user disables

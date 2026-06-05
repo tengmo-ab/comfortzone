@@ -3,6 +3,49 @@
 All notable changes to the Comfortzone Heat Pump integration are documented here.
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.11.0] – 2026-06-05
+
+### Changed — hot-water draw detection rebuilt and renamed
+A full day of labelled real-world data (two confirmed showers, several
+non-shower draws) showed the old `shower_in_progress` sensor was built on
+a false premise: **tank temperature can't tell a shower from a bath or a
+big dishwashing run**, and in practice the *largest* tank drops were not
+showers while the actual showers left almost no trace. The detector is
+rebuilt around what the data actually supports.
+
+- **Renamed** `binary_sensor.comfortzone_shower_in_progress` →
+  `binary_sensor.comfortzone_large_hot_water_draw`. The entity ID changes
+  (the old one is dropped); update any automations that referenced it. The
+  rename is deliberate honesty about what the sensor can know.
+- **New "missing heat" accumulator model.** Each poll integrates how far
+  the tank falls short of where the pump's current mode says it should be.
+  The sensor turns on once the accumulated shortfall passes a configurable
+  threshold and off once the tank recovers (hysteresis). This replaces the
+  brittle instantaneous-slope + fixed-drop logic.
+- **Recalibrated expected production slope** from 0.40 → **0.15 °C/min**.
+  The old value was almost 3× the real RX95 rate (measured across five
+  cycles), which made every production cycle look like a draw — the root
+  cause of the constant false positives at cycle start.
+- **Artifact rejection.** When the pump switches to hot-water mode the
+  `Hot water temp` reading can plunge tens of degrees in minutes because
+  the exchange valve repoints the sensor onto the cold loop (the same
+  directional effect behind the old −30 °C heating ΔT). Drops faster than
+  1.0 °C/min are now treated as sensor artifacts and excluded — this stops
+  a 28 °C "phantom drop" from being read as a giant draw.
+- **Configurable sensitivity** via the options flow
+  (`large_draw_threshold_c`, default 3 °C of accumulated shortfall).
+
+### Added
+- **Hot water cycle duration sensor** (`hot_water_cycle_duration`,
+  diagnostic). Reports the length in minutes of the last completed
+  hot-water production cycle, with a rolling-median baseline and an
+  `unusually_long` attribute. This is the cycle-length heuristic for
+  catching the one case the draw sensor is blind to: a shower taken while
+  the pump is *already* producing into a still-hot tank leaves no mark on
+  the tank temperature, but it does force the pump to run longer to refill.
+  The "unusually long" floor is configurable (`long_hw_cycle_min`,
+  default 50 min).
+
 ## [2.10.0] – 2026-06-04
 
 ### Added

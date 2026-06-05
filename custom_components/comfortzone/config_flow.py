@@ -25,6 +25,8 @@ from .const import (
     CONF_COMPRESSOR_ELECTRICAL_FACTOR,
     CONF_DEVICE_ID,
     CONF_FILTER_WARNING_DAYS,
+    CONF_LARGE_DRAW_THRESHOLD_C,
+    CONF_LONG_HW_CYCLE_MIN,
     CONF_LOW_HW_HYSTERESIS_C,
     CONF_LOW_HW_THRESHOLD_C,
     CONF_MAX_LOAD_DURATION_S,
@@ -37,6 +39,8 @@ from .const import (
     DEFAULT_ADDITION_POWER_THRESHOLD_W,
     DEFAULT_COMPRESSOR_FACTOR,
     DEFAULT_FILTER_WARNING_DAYS,
+    DEFAULT_LARGE_DRAW_THRESHOLD_C,
+    DEFAULT_LONG_HW_CYCLE_MIN,
     DEFAULT_LOW_HW_HYSTERESIS_C,
     DEFAULT_LOW_HW_THRESHOLD_C,
     DEFAULT_MAX_LOAD_DURATION_S,
@@ -257,5 +261,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ),
             )
         ] = vol.All(vol.Coerce(int), vol.Range(min=10, max=3600))
+
+        # --- Hot-water draw detection ---
+        schema_dict[
+            vol.Optional(
+                CONF_LARGE_DRAW_THRESHOLD_C,
+                default=opts.get(
+                    CONF_LARGE_DRAW_THRESHOLD_C, DEFAULT_LARGE_DRAW_THRESHOLD_C
+                ),
+            )
+        ] = vol.All(vol.Coerce(float), vol.Range(min=0.5, max=12.0))
+        schema_dict[
+            vol.Optional(
+                CONF_LONG_HW_CYCLE_MIN,
+                default=opts.get(
+                    CONF_LONG_HW_CYCLE_MIN, DEFAULT_LONG_HW_CYCLE_MIN
+                ),
+            )
+        ] = vol.All(vol.Coerce(float), vol.Range(min=10.0, max=240.0))
 
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema_dict))

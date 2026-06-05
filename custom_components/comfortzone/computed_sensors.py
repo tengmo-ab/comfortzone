@@ -56,10 +56,12 @@ from .calculations import (
 from .const import (
     CLEAR_TEXT_NAMES,
     CONF_COMPRESSOR_ELECTRICAL_FACTOR,
+    CONF_LONG_HW_CYCLE_MIN,
     CONF_MODEL,
     CONF_PRICE_ENTITY,
     CONF_PRICE_IN_ORE,
     DEFAULT_COMPRESSOR_FACTOR,
+    DEFAULT_LONG_HW_CYCLE_MIN,
     MIN_ELECTRICAL_FOR_COP_W,
     STANDBY_W,
 )
@@ -1040,6 +1042,118 @@ class TankHeatingRateSensor(_ComfortzoneComputedBase):
         self.async_write_ha_state()
 
 
+class HotWaterCycleDurationSensor(_ComfortzoneComputedBase, RestoreSensor):
+    """Duration (minutes) of the most recently completed hot-water cycle.
+
+    A cycle is the span from the pump starting hot-water production until it
+    stops. The value updates when a cycle ends and stays put until the next
+    one finishes.
+
+    This is the cycle-length heuristic for catching showers the tank
+    temperature can't see: a draw taken *while* the pump is already
+    producing doesn't make the tank fall (the pump keeps pace), but it does
+    force the pump to run longer to refill. A cycle markedly longer than the
+    rolling baseline therefore hints that someone drew hot water mid-cycle.
+
+    Attributes expose the rolling baseline (median of recent cycles) and an
+    ``unusually_long`` flag — true when the last cycle exceeded both the
+    configured absolute floor (``long_hw_cycle_min``) and ~1.5× the rolling
+    median. It is a hint, not proof: a deeply discharged tank also produces
+    a long cycle without any mid-cycle draw.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_suggested_display_precision = 1
+
+    # How many recent completed cycles to keep for the rolling baseline.
+    BASELINE_CYCLES = 10
+    # Last cycle must exceed this multiple of the median to count as long.
+    LONG_MEDIAN_FACTOR = 1.5
+    # Ignore absurd cycle lengths (stuck state, restart) above this.
+    MAX_PLAUSIBLE_CYCLE_MIN = 600.0
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator, entry,
+            suffix="hot_water_cycle_duration",
+            name="Hot water cycle duration",
+            icon="mdi:timer-sand",
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
+        self._cycle_start: Optional[datetime] = None
+        self._last_was_hw: bool = False
+        self._recent: Deque[float] = deque(maxlen=self.BASELINE_CYCLES)
+        self._attr_native_value: float | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._attr_native_value = float(last.native_value)
+            except (TypeError, ValueError):
+                self._attr_native_value = None
+
+    def _long_floor_min(self) -> float:
+        return float(
+            self.entry.options.get(
+                CONF_LONG_HW_CYCLE_MIN, DEFAULT_LONG_HW_CYCLE_MIN
+            )
+        )
+
+    @staticmethod
+    def _median(values) -> Optional[float]:
+        ordered = sorted(values)
+        n = len(ordered)
+        if n == 0:
+            return None
+        mid = n // 2
+        if n % 2:
+            return ordered[mid]
+        return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        if values is None:
+            return
+        now = dt_util.utcnow()
+        is_hw = _is_hot_water(values)
+
+        if is_hw and not self._last_was_hw:
+            # Rising edge — a new production cycle begins.
+            self._cycle_start = now
+        elif not is_hw and self._last_was_hw and self._cycle_start is not None:
+            # Falling edge — cycle just finished.
+            duration_min = (now - self._cycle_start).total_seconds() / 60.0
+            self._cycle_start = None
+            if 0 < duration_min <= self.MAX_PLAUSIBLE_CYCLE_MIN:
+                median_before = self._median(self._recent)
+                floor_min = self._long_floor_min()
+                unusually_long = duration_min >= floor_min and (
+                    median_before is None
+                    or duration_min >= median_before * self.LONG_MEDIAN_FACTOR
+                )
+                self._recent.append(duration_min)
+                self._attr_native_value = round(duration_min, 1)
+                self._attr_extra_state_attributes = {
+                    "unusually_long": unusually_long,
+                    "baseline_median_min": (
+                        round(self._median(self._recent), 1)
+                        if self._recent
+                        else None
+                    ),
+                    "long_floor_min": floor_min,
+                    "cycles_sampled": len(self._recent),
+                }
+                self.async_write_ha_state()
+
+        self._last_was_hw = is_hw
+        self._attr_available = True
+
+
 class DhwProductionRateSensor(_ComfortzoneComputedBase):
     """Thermal output power averaged over a short window while making
     hot water (kW).
@@ -1328,6 +1442,7 @@ def build_computed_sensors(
         # Tank dynamics & house thermal performance
         TankDecayRateSensor(coordinator, entry),
         TankHeatingRateSensor(coordinator, entry),
+        HotWaterCycleDurationSensor(coordinator, entry),
         DhwProductionRateSensor(coordinator, entry),
         CompressorLoadPercentageSensor(coordinator, entry),
         SpecificHeatingEnergySensor(coordinator, entry),

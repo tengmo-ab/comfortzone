@@ -164,10 +164,11 @@ flowchart LR
 | `sensor.comfortzone_compressor_load_percentage` | Aktuell kompressor-belastning (frekvens / max-frekvens × 100) |
 | `binary_sensor.comfortzone_compressor_running_at_max` | Larm — kompressorn har kört nära max (default ≥90% i ≥5 min). Användbar trigger för "pumpen har inget headroom kvar" |
 | `sensor.comfortzone_tank_decay_rate` | Hur snabbt VV-tanken tappar °C/h vid idle |
+| `sensor.comfortzone_hot_water_cycle_duration` | Längd (min) på senaste avslutade VV-cykel, med `unusually_long`-attribut (golv konfigurerbart, default 50 min). Diagnostik |
 | `sensor.comfortzone_specific_heating_energy` | kWh per °C inomhus-höjning (EMA) |
 | `sensor.comfortzone_reduced_fan_weekdays_schedule` | Diagnostik: fläktreduktions­schema veckodagar |
 | `sensor.comfortzone_reduced_fan_weekends_schedule` | Diagnostik: fläktreduktions­schema helger |
-| `binary_sensor.comfortzone_shower_in_progress` | Heuristisk dusch-detektor (snabb tappning av VV-tanken) |
+| `binary_sensor.comfortzone_large_hot_water_draw` | Heuristik för stort varmvattenuttag (dusch/bad/disk). "Missing heat"-ackumulator med artefakt-spärr; känslighet konfigurerbar (default 3°C). Hette tidigare `shower_in_progress` |
 
 **Termisk-till-elektrisk konvertering:** Varje modell har sin egen EN255-baserade kurva som interpoleras automatiskt över aktuell flow-temp. För **RX95** används datablads­punkterna 3,4 kW termiskt vid 0,8 kW el (35°C framledning) och 3,5 kW vid 1,1 kW (50°C). Andra modeller (`Other`) faller tillbaka till en generisk faktor (0,30) tills datablads­värden lagts till i `MODEL_COP_CURVES`. För att override:a kurvan helt — sätt `Compressor factor override` i Options.
 

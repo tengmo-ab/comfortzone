@@ -46,7 +46,9 @@
                     "low_hw_threshold_c": "Lågt VV-larm — trösktemperatur (°C)",
                     "low_hw_hysteresis_c": "Lågt VV-larm — hysteres (°C)",
                     "max_load_threshold_pct": "Kompressor full last — belastningströskel (%)",
-                    "max_load_duration_s": "Kompressor full last — varaktighet (sekunder)"
+                    "max_load_duration_s": "Kompressor full last — varaktighet (sekunder)",
+                    "large_draw_threshold_c": "Stort varmvattenuttag — känslighet (°C saknad värme)",
+                    "long_hw_cycle_min": "Lång VV-cykel-golv (minuter)"
                 },
                 "data_description": {
                     "price_entity": "Välj sensor som rapporterar aktuellt elpris. Krävs för att kostnadssensorerna ska uppdateras.",
@@ -59,7 +61,9 @@
                     "low_hw_threshold_c": "Standard 40°C. Larmet aktiveras när tanken sjunker under denna temperatur.",
                     "low_hw_hysteresis_c": "Standard 3°C. Larmet släpper när tanken överstiger (tröskel + hysteres), vilket undviker att larmet flippar på och av.",
                     "max_load_threshold_pct": "Standard 90%. Signalen aktiveras när inverter-frekvensen når denna andel av maxfrekvensen.",
-                    "max_load_duration_s": "Standard 300s (5 min). Signalen aktiveras först när lasten varit oavbrutet över tröskeln så här länge."
+                    "max_load_duration_s": "Standard 300s (5 min). Signalen aktiveras först när lasten varit oavbrutet över tröskeln så här länge.",
+                    "large_draw_threshold_c": "Standard 3°C. Hur mycket tanken måste understiga sin förväntade temperatur (integrerat över tid) innan sensorn 'Stort varmvattenuttag' slår till. Lägre = känsligare (fångar mindre uttag men fler falsklarm), högre = bara stora uttag som duschar och bad.",
+                    "long_hw_cycle_min": "Standard 50 min. En avslutad varmvattencykel längre än så flaggas 'ovanligt lång' på cykellängd-sensorn, vilket antyder att någon tappade varmvatten medan pumpen redan producerade."
                 }
             }
         }

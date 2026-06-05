@@ -33,12 +33,14 @@ from .const import (
     CONF_FILTER_WARNING_DAYS,
     CONF_LOW_HW_HYSTERESIS_C,
     CONF_LOW_HW_THRESHOLD_C,
+    CONF_LARGE_DRAW_THRESHOLD_C,
     CONF_MAX_LOAD_DURATION_S,
     CONF_MAX_LOAD_THRESHOLD_PCT,
     CONF_SHORT_CYCLE_THRESHOLD,
     DEFAULT_ADDITION_DURATION_THRESHOLD_S,
     DEFAULT_ADDITION_POWER_THRESHOLD_W,
     DEFAULT_FILTER_WARNING_DAYS,
+    DEFAULT_LARGE_DRAW_THRESHOLD_C,
     DEFAULT_LOW_HW_HYSTERESIS_C,
     DEFAULT_LOW_HW_THRESHOLD_C,
     DEFAULT_MAX_LOAD_DURATION_S,
@@ -157,7 +159,7 @@ async def async_setup_entry(
         entities.append(ComfortzoneBinarySensorEntity(coordinator, entry, suffix, config))
 
     # Computed/heuristic binary sensors that don't map to a single API field
-    entities.append(ShowerInProgressBinarySensor(coordinator, entry))
+    entities.append(LargeHotWaterDrawBinarySensor(coordinator, entry))
     entities.append(ShortCyclingBinarySensor(coordinator, entry))
     entities.append(AdditionHeaterActiveBinarySensor(coordinator, entry))
     entities.append(FilterChangeSoonBinarySensor(coordinator, entry))
@@ -243,64 +245,91 @@ class ComfortzoneBinarySensorEntity(CoordinatorEntity, BinarySensorEntity):
         self._attr_is_on = new_state if new_availability else None
 
 
-class ShowerInProgressBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Heuristic binary sensor: True when hot water is being drawn rapidly.
+class LargeHotWaterDrawBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Heuristic binary sensor: True when a large hot-water draw is underway.
 
-    The detection compares the **actual** tank-temperature slope against
-    the slope we'd **expect** given what the heat pump is doing right now:
+    *Renamed from ``shower_in_progress`` in 2.11.0.* Real-world data showed
+    the tank temperature simply cannot tell a shower apart from a bath or a
+    big dishwashing run — and worse, the largest drops in the data were
+    **not** showers while the actual showers left almost no trace. So this
+    sensor is now honest about what it measures: a sizeable draw of hot
+    water, whatever the cause.
 
-    * When idle, the tank loses ~0.05 °C/min from standing losses. Anything
-      meaningfully faster than that is water being drawn.
-    * When the pump is producing hot water, the tank should be rising
-      by roughly 0.3-0.6 °C/min. A near-flat or slightly negative slope
-      during production is a strong signal of a shower beating the
-      production rate.
+    How it works — a "missing heat" accumulator (°C):
 
-    The trigger condition is therefore "actual slope falls more than
-    ``DEVIATION_THRESHOLD_C_PER_MIN`` below the expected slope", combined
-    with a small absolute-drop guard to suppress sensor-noise blips.
+    Every poll we compare the tank's **actual** temperature change against
+    the change we'd **expect** from the pump's current mode:
 
-    Useful for automations: turn off pre-heat schedules, switch on a
-    bathroom fan, log shower frequency, or feed shower events into the
-    energy management project as "the tank is actively being used".
+    * Idle / heating: the tank only loses standing-loss heat
+      (~0.01 °C/min). Any faster fall is water leaving the tank.
+    * Making hot water: the tank rises at ~0.15 °C/min on RX95 (this was
+      mis-set to 0.40 before 2.11.0, which made every production cycle look
+      like a draw and produced constant false positives). A flat or falling
+      tank *during* production means a draw is beating the pump.
+
+    The per-interval shortfall ``expected − actual`` (°C/min) is integrated
+    over time into an accumulator. The sensor turns **on** once the
+    accumulator passes ``large_draw_threshold_c`` and **off** once the tank
+    recovers and the accumulator decays back down (hysteresis).
+
+    Two guards keep it honest:
+
+    * **Artifact rejection.** When the pump switches to hot-water mode the
+      ``Hot water temp`` reading can plunge tens of degrees in a couple of
+      minutes because the exchange valve repoints the sensor onto the cold
+      loop — physically impossible for a real tap. Any drop faster than
+      ``ARTIFACT_MAX_DROP_C_PER_MIN`` is treated as a sensor artifact and
+      excluded from the accumulator.
+    * **Small draws fade out.** Brief draws (a hand-wash, a night toilet
+      fill) never build enough deficit to cross the threshold, so they're
+      ignored by design.
+
+    Known blind spot: a shower taken while the pump is *already* producing
+    into a still-hot tank leaves no signal here at all — the pump masks it.
+    The ``hot_water_cycle_duration`` sensor catches those after the fact.
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Shower in progress"
+    _attr_name = "Large hot water draw"
     _attr_device_class = BinarySensorDeviceClass.RUNNING
-    _attr_icon = "mdi:shower-head"
+    _attr_icon = "mdi:water-pump"
 
-    # Expected slope of the tank-temperature reading in °C/min.
-    # Negative = cooling, positive = warming. Calibrated against
-    # observed RX95 behaviour on a 170 L tank.
-    EXPECTED_SLOPE_IDLE = -0.05
-    EXPECTED_SLOPE_HW_PRODUCTION = 0.40
+    # Expected tank-temperature slope in °C/min by pump mode. Negative =
+    # cooling. Recalibrated against five observed RX95 production cycles
+    # (all ~0.15-0.17 °C/min) and overnight standing losses (~0.2-0.6 °C/h).
+    EXPECTED_SLOPE_IDLE = -0.01
+    EXPECTED_SLOPE_HW_PRODUCTION = 0.15
 
-    # Actual slope must fall this many °C/min *below* expected before
-    # we count it as water being drawn. Larger negative number = stricter.
-    DEVIATION_THRESHOLD_C_PER_MIN = -0.20
+    # Drops faster than this (°C/min) are physically impossible for a tap on
+    # this tank and are treated as the valve/sensor repointing artifact.
+    # Real draws observed in the field top out around 0.5 °C/min.
+    ARTIFACT_MAX_DROP_C_PER_MIN = 1.0
 
-    # The tank must actually have dropped at least this much over the
-    # rolling window before the alarm fires — protects against the
-    # occasional single-poll temperature blip.
-    MIN_ABSOLUTE_DROP_C = 0.5
+    # The accumulator decays back to zero once the tank recovers; the sensor
+    # clears when it falls to this fraction of the on-threshold (hysteresis).
+    CLEAR_FRACTION = 0.33
 
-    # Sliding window for slope computation.
-    WINDOW_SECONDS = 5 * 60
+    # Cap the accumulator so a long event doesn't take forever to clear.
+    MAX_ACCUMULATOR_C = 12.0
 
-    # Hold the "on" state for this long after the slope clears the
-    # threshold, so the sensor doesn't toggle off briefly between draws.
-    TRAIL_SECONDS = 120
+    # Ignore implausibly long gaps between polls (restart, API outage).
+    MAX_GAP_SECONDS = 600
 
     def __init__(self, coordinator: DataUpdateCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self.entry = entry
-        self._attr_unique_id = f"{device_unique_id(entry)}_shower_in_progress"
+        self._attr_unique_id = f"{device_unique_id(entry)}_large_hot_water_draw"
         self._attr_device_info = build_device_info(entry)
-        self._samples: Deque[Tuple[datetime, float]] = deque()
-        self._last_active_at: Optional[datetime] = None
+        self._prev_t: Optional[datetime] = None
+        self._prev_temp: Optional[float] = None
+        self._deficit_c: float = 0.0
         self._attr_is_on = False
         self._attr_extra_state_attributes = {}
+
+    def _threshold(self) -> float:
+        return float(_option(
+            self.entry, CONF_LARGE_DRAW_THRESHOLD_C, DEFAULT_LARGE_DRAW_THRESHOLD_C
+        ))
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -317,61 +346,52 @@ class ShowerInProgressBinarySensor(CoordinatorEntity, BinarySensorEntity):
             self.async_write_ha_state()
             return
 
-        # Maintain rolling window
-        self._samples.append((now, hw_temp))
-        cutoff = now.timestamp() - self.WINDOW_SECONDS
-        while self._samples and self._samples[0][0].timestamp() < cutoff:
-            self._samples.popleft()
-
-        slope_per_min: Optional[float] = None
-        absolute_drop: float = 0.0
-        if len(self._samples) >= 2:
-            first_t, first_v = self._samples[0]
-            span_min = (now - first_t).total_seconds() / 60.0
-            if span_min >= 0.5:
-                slope_per_min = (hw_temp - first_v) / span_min
-                # Positive when the window contains an actual drop.
-                absolute_drop = first_v - hw_temp
-
         pump_making_hw = _is_hot_water(values)
         expected_slope = (
             self.EXPECTED_SLOPE_HW_PRODUCTION
             if pump_making_hw
             else self.EXPECTED_SLOPE_IDLE
         )
-        deviation = (
-            slope_per_min - expected_slope if slope_per_min is not None else None
-        )
 
-        is_drawing = (
-            deviation is not None
-            and deviation <= self.DEVIATION_THRESHOLD_C_PER_MIN
-            and absolute_drop >= self.MIN_ABSOLUTE_DROP_C
-        )
+        inst_slope: Optional[float] = None
+        artifact = False
+        if self._prev_t is not None and self._prev_temp is not None:
+            dt_min = (now - self._prev_t).total_seconds() / 60.0
+            if 0 < dt_min <= self.MAX_GAP_SECONDS / 60.0:
+                inst_slope = (hw_temp - self._prev_temp) / dt_min
+                if inst_slope <= -self.ARTIFACT_MAX_DROP_C_PER_MIN:
+                    # Sensor/valve repointing — do not count toward the draw.
+                    artifact = True
+                else:
+                    shortfall = expected_slope - inst_slope  # °C/min below expected
+                    self._deficit_c += shortfall * dt_min
+                    self._deficit_c = max(
+                        0.0, min(self.MAX_ACCUMULATOR_C, self._deficit_c)
+                    )
 
-        if is_drawing:
-            self._last_active_at = now
-            self._attr_is_on = True
-        elif (
-            self._last_active_at
-            and (now - self._last_active_at).total_seconds() < self.TRAIL_SECONDS
-        ):
-            self._attr_is_on = True
+        self._prev_t = now
+        self._prev_temp = hw_temp
+
+        threshold = self._threshold()
+        clear_at = threshold * self.CLEAR_FRACTION
+        if self._attr_is_on:
+            if self._deficit_c <= clear_at:
+                self._attr_is_on = False
         else:
-            self._attr_is_on = False
+            if self._deficit_c >= threshold:
+                self._attr_is_on = True
 
         self._attr_available = True
         self._attr_extra_state_attributes = {
             "hot_water_temp": hw_temp,
             "slope_c_per_min": (
-                round(slope_per_min, 3) if slope_per_min is not None else None
+                round(inst_slope, 3) if inst_slope is not None else None
             ),
             "expected_slope_c_per_min": expected_slope,
-            "deviation_c_per_min": (
-                round(deviation, 3) if deviation is not None else None
-            ),
-            "deviation_threshold_c_per_min": self.DEVIATION_THRESHOLD_C_PER_MIN,
-            "absolute_drop_c": round(absolute_drop, 2),
+            "accumulated_deficit_c": round(self._deficit_c, 2),
+            "threshold_c": threshold,
+            "clear_threshold_c": round(clear_at, 2),
+            "artifact_rejected": artifact,
             "pump_making_hot_water": pump_making_hw,
         }
         self.async_write_ha_state()
