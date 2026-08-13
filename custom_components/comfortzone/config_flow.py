@@ -24,6 +24,7 @@ from .const import (
     CONF_ADDITION_POWER_THRESHOLD_W,
     CONF_COMPRESSOR_ELECTRICAL_FACTOR,
     CONF_DEVICE_ID,
+    CONF_FAN_SPEED_PROPERTY,
     CONF_FILTER_WARNING_DAYS,
     CONF_LARGE_DRAW_THRESHOLD_C,
     CONF_LONG_HW_CYCLE_MIN,
@@ -279,5 +280,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ),
             )
         ] = vol.All(vol.Coerce(float), vol.Range(min=10.0, max=240.0))
+
+        # --- Fan speed ---
+        # Left blank the integration probes a list of likely SetProperty names
+        # on the first write. Fill this in to pin an exact one.
+        schema_dict[
+            vol.Optional(
+                CONF_FAN_SPEED_PROPERTY,
+                default=opts.get(CONF_FAN_SPEED_PROPERTY, ""),
+            )
+        ] = str
 
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema_dict))

@@ -3,6 +3,43 @@
 All notable changes to the Comfortzone Heat Pump integration are documented here.
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.12.0] – 2026-08-13
+
+### Added — fan speed control (låg / normal / boost / schemalagd)
+The Comfortzone Android app can change the fan speed, so the capability
+exists on the Loggamera side even though it appears in none of the public
+API documentation. This release adds it.
+
+- **New `select.comfortzone_fan_speed`** with four modes — **Låg**,
+  **Normal**, **Boost** and **Schemalagd (automatik)** — matching the app.
+  Scheduled mode makes the fan follow the reduced-fan day/night schedule
+  already surfaced by the `reduced_fan_*_schedule` diagnostic sensors,
+  rather than holding a fixed speed.
+- **Value mapping** taken from the reverse-engineered control protocol
+  ([qix67/comfortzone_heatpump](https://github.com/qix67/comfortzone_heatpump)):
+  `1 = low, 2 = normal, 3 = fast, 4 = on timer`. Mode 4 only exists on
+  pumps running control protocol 1.8 or later; on an older 1.6 pump the
+  write is rejected and the integration hides the option automatically.
+- **Automatic property-name discovery.** Loggamera publishes no list of
+  writable properties, so the first write probes a short list of likely
+  `SetProperty` names (`SetFanSpeed`, `SetFanMode`, `SetVentilation`, …)
+  and remembers whichever the API accepts. Wrong guesses are rejected by
+  the API without reaching the pump.
+- **New `fan_speed_property` option** to pin an exact property name if your
+  pump answers to something outside the candidate list.
+- **New `scripts/probe_loggamera_properties.py`** — a dependency-free
+  script that dumps every field your pump reports and, with
+  `--probe-write`, identifies the property name that writes the fan speed.
+  By default it re-writes the mode the pump is already in, so a successful
+  probe changes nothing.
+- **Diagnostics** now report which read field and write property were
+  resolved, so a diagnostics dump is enough to confirm the mapping.
+
+### Changed
+- `async_set_property` accepts an `attempts` override. Probing uses a
+  single attempt so a rejected name fails fast instead of waiting out the
+  60-second retry; ordinary writes keep the existing retry behaviour.
+
 ## [2.11.0] – 2026-06-05
 
 ### Changed — hot-water draw detection rebuilt and renamed

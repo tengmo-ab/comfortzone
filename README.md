@@ -27,6 +27,7 @@
 | 📊 **24+ sensorer** | Inomhus, ute, frånluft, kompressor­effekt, frekvens, fläkthastighet, tillsats m.m. |
 | 🚨 **Larm & status** | Filterlarm, huvudlarm, kompressor­status, ventil­läge — allt som binär­sensorer. |
 | 🎚️ **Värmekurva** | Justera värmekurva och semester­dagar direkt från dashboarden. |
+| 🌀 **Fläkthastighet** | Låg, normal, boost och schemalagd automatik — samma fyra lägen som Android-appen. |
 | 🛡️ **Smart kö** | Inbyggd kö och retry hanterar långsam Loggamera-API utan att krascha integrationen. |
 | 🇸🇪 **Svensk översättning** | Hela konfigurations­flödet på svenska. |
 | 🩺 **Diagnostik** | Inbyggd "Download Diagnostics" med dold API-nyckel — perfekt för bug-rapporter. |
@@ -103,6 +104,7 @@ flowchart LR
 | `number.comfortzone_hot_water_temp_setpoint` | Number | Börvärde varmvatten (30–60°C) |
 | `number.comfortzone_heat_curve` | Number | Värmekurva (0,0–6,0) |
 | `number.comfortzone_holiday_reduction_days` | Number | Semesterdagar (0–9) |
+| `select.comfortzone_fan_speed` | Select | Fläkthastighet: låg / normal / boost / schemalagd |
 | `switch.comfortzone_hot_water_extra` | Switch | Extra varmvatten |
 | `button.comfortzone_acknowledge_alarm` | Button | Kvittera huvudlarm |
 | `button.comfortzone_reset_filter_alarm` | Button | Återställ filterlarm |
@@ -196,6 +198,54 @@ flowchart LR
 | **Filter warning days** | Standard `7` dagar kvar för förvarningen. |
 | **Low HW threshold + hysteresis** | Standard `40` °C tröskel + `3` °C hysteres → larm aktiveras < 40 °C, släpper > 43 °C. |
 | **Compressor running-at-max threshold + duration** | Standard `90` % i `300` s → trippar när inverter-frekvensen varit ≥ 90 % av max sammanhängande i ≥ 5 minuter. |
+| **Fan speed property name** | Lämna **tomt** (default) så provar integrationen en lista med troliga `SetProperty`-namn vid första skrivningen och kommer ihåg det som fungerar. Fyll bara i om din pump svarar på något annat namn — se avsnittet nedan. |
+
+---
+
+## 🌀 Fläkthastighet
+
+Android-appen kan byta fläktläge, men fläkten nämns inte i någon publik
+beskrivning av Loggamera-API:t. Lägena och värdena här är hämtade från den
+reverse-engineerade styrprotokoll-implementationen
+[qix67/comfortzone_heatpump](https://github.com/qix67/comfortzone_heatpump),
+där registret heter `Fan speed`:
+
+| Läge | Värde | Beskrivning |
+| :-- | :--: | :-- |
+| Låg | `1` | Fast låg hastighet |
+| Normal | `2` | Fast normalhastighet |
+| Boost | `3` | Fast förhöjd hastighet |
+| Schemalagd (automatik) | `4` | Fläkten följer dygnsschemat i stället för en fast hastighet |
+
+Läge `4` finns bara på pumpar med styrprotokoll **1.8 eller senare**. På en
+äldre 1.6-pump avvisas skrivningen och integrationen döljer alternativet
+automatiskt. Schemat som läge 4 följer är samma som diagnostiksensorerna
+`sensor.comfortzone_reduced_fan_*_schedule` visar.
+
+### Vilket property-namn används?
+
+Loggamera publicerar ingen lista över skrivbara properties, så integrationen
+provar en kort lista med troliga `SetProperty`-namn vid första skrivningen
+(`SetFanSpeed`, `SetFanMode`, `SetVentilation`, `SetVentilationMode`,
+`SetFanLevel`) och kommer ihåg det som accepteras. Ett namn API:t inte känner
+igen avvisas direkt utan att nå pumpen.
+
+Vill du veta exakt vad *din* pump svarar på, kör probe-skriptet på
+HA-värden:
+
+```bash
+# Dumpa allt pumpen rapporterar, med fläktrelaterade fält först
+python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345
+
+# Identifiera property-namnet som skriver fläkthastigheten
+python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345 --probe-write
+```
+
+Skriptet skriver som standard tillbaka det läge pumpen redan står i, så en
+lyckad probe ändrar ingenting. Hittar du ett namn utanför kandidatlistan,
+fyll i det under **Fan speed property name** i integrationens alternativ —
+och gärna öppna ett issue så det kan bli default.
+
 
 ---
 
@@ -224,6 +274,7 @@ flowchart LR
 - **30+ Sensors:** Indoor, outdoor, exhaust air, compressor power, frequency, fan speed, etc.
 - **Alarms & Status:** Filter alarm, main alarm, compressor status, valve positions (binary sensors).
 - **Settings:** Adjust heating curve and holiday days directly from your dashboard.
+- **Fan speed (new in 2.12):** Low, normal, boost and scheduled/automatic — the same four modes as the Android app.
 - **Smart Queuing:** Built-in write queue to handle the slow Loggamera API smoothly without crashing the integration.
 - **Diagnostics:** Built-in "Download Diagnostics" with redacted API key for easy bug reporting.
 - **Energy panel ready (new in 2.1):** Per-mode kWh sensors split between *space heating* and *domestic hot water*, plus optional cost sensors via a Nord Pool price entity. Because the RX95 has a single compressor, every kWh is unambiguously attributable to one of the two purposes.

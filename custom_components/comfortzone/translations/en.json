@@ -48,7 +48,8 @@
                     "max_load_threshold_pct": "Compressor running-at-max — load threshold (%)",
                     "max_load_duration_s": "Compressor running-at-max — duration (seconds)",
                     "large_draw_threshold_c": "Large hot water draw — sensitivity (°C of missing heat)",
-                    "long_hw_cycle_min": "Long hot-water cycle floor (minutes)"
+                    "long_hw_cycle_min": "Long hot-water cycle floor (minutes)",
+                    "fan_speed_property": "Fan speed property name (blank = auto-detect)"
                 },
                 "data_description": {
                     "price_entity": "Pick the entity that reports your current electricity spot price. Required for the heating cost / hot water cost sensors to update.",
@@ -64,6 +65,19 @@
                     "max_load_duration_s": "Default 300 s (5 min). The signal only trips after the load has been continuously above the threshold for at least this duration.",
                     "large_draw_threshold_c": "Default 3 °C. How much the tank must fall short of its expected temperature (integrated over time) before the 'Large hot water draw' sensor turns on. Lower = more sensitive (catches smaller draws but more false positives), higher = only big draws like showers and baths.",
                     "long_hw_cycle_min": "Default 50 min. A completed hot-water production cycle longer than this is flagged 'unusually long' on the cycle-duration sensor, hinting that someone drew hot water while the pump was already producing."
+                }
+            }
+        }
+    },
+    "entity": {
+        "select": {
+            "fan_speed": {
+                "name": "Fan speed",
+                "state": {
+                    "low": "Low",
+                    "normal": "Normal",
+                    "boost": "Boost",
+                    "schedule": "Scheduled (automatic)"
                 }
             }
         }

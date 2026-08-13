@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import aiohttp
 
@@ -53,6 +53,9 @@ class ComfortzoneApiClient:
         self._session = session
         self._write_lock = asyncio.Lock()
         self._last_write_time = 0.0
+        # Cache of "candidate tuple -> PropertyName the API actually accepted",
+        # so a probed property is only discovered once per config entry.
+        self._resolved_properties: dict[tuple[str, ...], str] = {}
 
     async def async_get_data(self) -> Optional[dict[str, Any]]:
         """Fetch data from the RawData endpoint. Returns None when API is busy."""
@@ -136,12 +139,18 @@ class ComfortzoneApiClient:
                 f"An unexpected error occurred fetching status: {err}"
             ) from err
 
-    async def async_set_property(self, property_name: str, value: Any) -> bool:
+    async def async_set_property(
+        self, property_name: str, value: Any, *, attempts: Optional[int] = None
+    ) -> bool:
         """Send a SetProperty command. Retries once after 60s on transient errors.
 
         Writes are queued (min 5s spacing) to avoid overloading the API.
+        Pass ``attempts=1`` to disable the retry — used when probing whether a
+        PropertyName exists at all, where waiting 60s per wrong guess would
+        make the whole probe unusable.
         Returns True on success, False otherwise.
         """
+        max_attempts = MAX_WRITE_ATTEMPTS if attempts is None else max(1, attempts)
         async with self._write_lock:
             elapsed = time.time() - self._last_write_time
             if elapsed < MIN_WRITE_SPACING_SEC:
@@ -157,8 +166,8 @@ class ComfortzoneApiClient:
             }
 
             try:
-                for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
-                    log_prefix = f"[SetProperty {attempt}/{MAX_WRITE_ATTEMPTS}]"
+                for attempt in range(1, max_attempts + 1):
+                    log_prefix = f"[SetProperty {attempt}/{max_attempts}]"
                     _LOGGER.debug(
                         "%s Setting '%s' to '%s'", log_prefix, property_name, value
                     )
@@ -251,7 +260,7 @@ class ComfortzoneApiClient:
                         )
                         return False
 
-                    if should_retry and attempt < MAX_WRITE_ATTEMPTS:
+                    if should_retry and attempt < max_attempts:
                         _LOGGER.info("Waiting %ss before retry...", RETRY_DELAY_SEC)
                         await asyncio.sleep(RETRY_DELAY_SEC)
                         continue
@@ -263,3 +272,47 @@ class ComfortzoneApiClient:
                 return False
             finally:
                 self._last_write_time = time.time()
+
+    def resolved_property(self, property_names: Sequence[str]) -> Optional[str]:
+        """Return the PropertyName already proven to work for ``property_names``."""
+        return self._resolved_properties.get(tuple(property_names))
+
+    async def async_set_first_supported_property(
+        self, property_names: Sequence[str], value: Any
+    ) -> Optional[str]:
+        """Write ``value`` using the first PropertyName the API accepts.
+
+        Loggamera publishes no list of writable properties, so for settings we
+        only know from the device protocol — the fan speed in particular — we
+        try a short list of plausible names once and remember which one stuck.
+        Subsequent writes go straight to the resolved name.
+
+        Returns the accepted PropertyName, or ``None`` if every candidate was
+        rejected.
+        """
+        if not property_names:
+            return None
+
+        cache_key = tuple(property_names)
+        known = self._resolved_properties.get(cache_key)
+        if known is not None:
+            return known if await self.async_set_property(known, value) else None
+
+        for name in property_names:
+            # Single attempt per candidate: a name the API doesn't know comes
+            # back as a 4xx straight away, and we want to move on immediately.
+            if await self.async_set_property(name, value, attempts=1):
+                _LOGGER.info(
+                    "Resolved writable Comfortzone property '%s' (from %d candidates)",
+                    name,
+                    len(cache_key),
+                )
+                self._resolved_properties[cache_key] = name
+                return name
+            _LOGGER.debug("PropertyName '%s' rejected, trying next candidate", name)
+
+        _LOGGER.warning(
+            "None of the candidate property names %s were accepted by the API",
+            ", ".join(cache_key),
+        )
+        return None

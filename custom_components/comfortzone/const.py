@@ -25,6 +25,10 @@ CONF_LOW_HW_HYSTERESIS_C = "low_hw_hysteresis_c"
 CONF_MAX_LOAD_THRESHOLD_PCT = "max_load_threshold_pct"
 CONF_MAX_LOAD_DURATION_S = "max_load_duration_s"
 
+# Optional override for the SetProperty name used to write the fan speed.
+# Empty means "auto-detect" (see FAN_SPEED_PROPERTY_CANDIDATES below).
+CONF_FAN_SPEED_PROPERTY = "fan_speed_property"
+
 # Large-hot-water-draw detection (the sensor formerly called "shower in
 # progress"). The threshold is expressed in °C of accumulated "missing heat":
 # how far the tank temperature falls short of where the pump's current mode
@@ -177,6 +181,60 @@ CLEAR_TEXT_NAMES = {
     "REDUCED_FAN_WEEKENDS_STOP_H": "Reduced fan Weekends stop hour",
     "REDUCED_FAN_WEEKENDS_STOP_M": "Reduced fan Weekends stop minute",
 }
+
+# --- Fan speed / ventilation mode -----------------------------------------
+#
+# The Comfortzone controller stores the fan setting as a single small integer
+# in the register the RS485 protocol calls "Fan speed". The value set is
+# documented in the reverse-engineered protocol library
+# (github.com/qix67/comfortzone_heatpump, comfortzone_heatpump.cpp):
+#
+#     1 = low, 2 = normal, 3 = fast, 4 = on timer (HP protocol 1.8+)
+#
+# Value 4 is the "automatic" mode the Android app exposes: the fan follows
+# the reduced-fan day/night schedule instead of a fixed speed. Pumps running
+# the older 1.6 protocol reject 4 and only accept 1-3, so a write of 4 that
+# comes back rejected means "this pump is too old for scheduled mode".
+FAN_MODE_LOW = 1
+FAN_MODE_NORMAL = 2
+FAN_MODE_BOOST = 3
+FAN_MODE_SCHEDULE = 4
+
+# Option strings used by the select entity (translated via strings.json).
+FAN_MODE_OPTIONS: dict[str, int] = {
+    "low": FAN_MODE_LOW,
+    "normal": FAN_MODE_NORMAL,
+    "boost": FAN_MODE_BOOST,
+    "schedule": FAN_MODE_SCHEDULE,
+}
+FAN_MODE_VALUE_TO_OPTION: dict[int, str] = {
+    value: option for option, value in FAN_MODE_OPTIONS.items()
+}
+
+# Loggamera does not publish the list of writable properties, and the fan
+# setting is absent from every public description of the API — it was found
+# by observing that the Android app can change it. We therefore probe a short
+# list of plausible PropertyName strings once, in this order, and remember
+# whichever one the API accepts. Users whose pump answers to something else
+# can pin the exact string with the `fan_speed_property` option.
+FAN_SPEED_PROPERTY_CANDIDATES: tuple[str, ...] = (
+    "SetFanSpeed",
+    "SetFanMode",
+    "SetVentilation",
+    "SetVentilationMode",
+    "SetFanLevel",
+)
+
+# Candidate ClearTextNames that may carry the *configured* fan mode (1-4) as
+# opposed to the momentary duty cycle in "Fan speed (current)" (a percentage).
+# Read in order; the first entry that parses to an integer within 1-4 wins.
+FAN_MODE_READ_CANDIDATES: tuple[str, ...] = (
+    "Fan speed",
+    "Fan speed setting",
+    "Fan mode",
+    "Ventilation mode",
+    "Fan state",
+)
 
 # Maps binary_sensor suffix -> ClearTextName
 BINARY_SENSOR_MAP = {

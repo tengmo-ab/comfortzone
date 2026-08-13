@@ -22,6 +22,7 @@ from .const import CONF_DEVICE_ID, DOMAIN
 PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SWITCH,
     Platform.BUTTON,
     Platform.SENSOR,
