@@ -143,11 +143,17 @@ class ComfortzoneFanSpeedSelect(OptimisticConfirmedMixin, CoordinatorEntity, Sel
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose what the runtime probing resolved, for troubleshooting."""
         configured = self.entry.options.get(CONF_FAN_SPEED_PROPERTY)
+        resolved = configured or self._client.resolved_property(
+            FAN_SPEED_PROPERTY_CANDIDATES
+        )
         return {
             "read_field": self._read_field,
-            "write_property": configured
-            or self._client.resolved_property(FAN_SPEED_PROPERTY_CANDIDATES),
+            "write_property": resolved,
             "write_property_source": "option" if configured else "auto-detected",
+            "write_supported": bool(resolved),
+            "candidates_exhausted": self._client.probe_exhausted(
+                FAN_SPEED_PROPERTY_CANDIDATES
+            ),
             "scheduled_mode_supported": self._schedule_supported,
         }
 
@@ -216,20 +222,29 @@ class ComfortzoneFanSpeedSelect(OptimisticConfirmedMixin, CoordinatorEntity, Sel
             return
 
         if accepted is None:
-            if value == FAN_MODE_SCHEDULE and self._schedule_supported:
+            # A rejection only says "pre-1.8 pump" if we already know the
+            # property name is good — otherwise the write failed because the
+            # name is wrong, which says nothing about the pump's protocol.
+            name_is_known = bool(configured) or bool(
+                self._client.resolved_property(FAN_SPEED_PROPERTY_CANDIDATES)
+            )
+            if name_is_known and value == FAN_MODE_SCHEDULE and self._schedule_supported:
                 # Every other mode is accepted by both protocol generations, so
                 # a rejection that only affects mode 4 points at a pre-1.8 pump.
                 _LOGGER.warning(
-                    "Scheduled fan mode was rejected — this pump most likely runs "
-                    "the older 1.6 control protocol, which only supports fan "
-                    "speeds 1-3. Hiding the option."
+                    "Scheduled fan mode was rejected while other modes work — "
+                    "this pump most likely runs the older 1.6 control protocol, "
+                    "which only supports fan speeds 1-3. Hiding the option."
                 )
                 self._schedule_supported = False
                 self.async_write_ha_state()
             else:
                 _LOGGER.error(
-                    "Failed to set fan speed to '%s'. If your pump uses a different "
-                    "property name, set it via the '%s' option.",
+                    "Failed to set fan speed to '%s': no working SetProperty name "
+                    "is known for this pump. Run "
+                    "scripts/probe_loggamera_properties.py --probe-write to find "
+                    "it, then set it via the '%s' option. Reading the current "
+                    "mode continues to work.",
                     option,
                     CONF_FAN_SPEED_PROPERTY,
                 )

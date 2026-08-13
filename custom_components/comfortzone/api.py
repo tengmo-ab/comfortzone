@@ -56,6 +56,11 @@ class ComfortzoneApiClient:
         # Cache of "candidate tuple -> PropertyName the API actually accepted",
         # so a probed property is only discovered once per config entry.
         self._resolved_properties: dict[tuple[str, ...], str] = {}
+        # Candidate sets where every name was rejected. Probing a set costs one
+        # API write per name, so a sweep that found nothing is not repeated on
+        # every subsequent user action — the user is pointed at the probe
+        # script and the explicit property option instead.
+        self._exhausted_probes: set[tuple[str, ...]] = set()
 
     async def async_get_data(self) -> Optional[dict[str, Any]]:
         """Fetch data from the RawData endpoint. Returns None when API is busy."""
@@ -277,6 +282,10 @@ class ComfortzoneApiClient:
         """Return the PropertyName already proven to work for ``property_names``."""
         return self._resolved_properties.get(tuple(property_names))
 
+    def probe_exhausted(self, property_names: Sequence[str]) -> bool:
+        """True if every candidate in ``property_names`` was already rejected."""
+        return tuple(property_names) in self._exhausted_probes
+
     async def async_set_first_supported_property(
         self, property_names: Sequence[str], value: Any
     ) -> Optional[str]:
@@ -298,6 +307,13 @@ class ComfortzoneApiClient:
         if known is not None:
             return known if await self.async_set_property(known, value) else None
 
+        if cache_key in self._exhausted_probes:
+            _LOGGER.debug(
+                "Skipping probe: every candidate in %s was already rejected",
+                ", ".join(cache_key),
+            )
+            return None
+
         for name in property_names:
             # Single attempt per candidate: a name the API doesn't know comes
             # back as a 4xx straight away, and we want to move on immediately.
@@ -311,8 +327,12 @@ class ComfortzoneApiClient:
                 return name
             _LOGGER.debug("PropertyName '%s' rejected, trying next candidate", name)
 
+        self._exhausted_probes.add(cache_key)
         _LOGGER.warning(
-            "None of the candidate property names %s were accepted by the API",
+            "None of the candidate property names (%s) were accepted by the API. "
+            "Not probing again for this session. Run "
+            "scripts/probe_loggamera_properties.py --probe-write to find the "
+            "name your pump uses, then set it in the integration options",
             ", ".join(cache_key),
         )
         return None

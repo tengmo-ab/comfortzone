@@ -5,10 +5,10 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [2.12.0] – 2026-08-13
 
-### Added — fan speed control (låg / normal / boost / schemalagd)
+### Added — fan speed (låg / normal / boost / schemalagd)
 The Comfortzone Android app can change the fan speed, so the capability
 exists on the Loggamera side even though it appears in none of the public
-API documentation. This release adds it.
+API documentation.
 
 - **New `select.comfortzone_fan_speed`** with four modes — **Låg**,
   **Normal**, **Boost** and **Schemalagd (automatik)** — matching the app.
@@ -17,28 +17,44 @@ API documentation. This release adds it.
   rather than holding a fixed speed.
 - **Value mapping** taken from the reverse-engineered control protocol
   ([qix67/comfortzone_heatpump](https://github.com/qix67/comfortzone_heatpump)):
-  `1 = low, 2 = normal, 3 = fast, 4 = on timer`. Mode 4 only exists on
-  pumps running control protocol 1.8 or later; on an older 1.6 pump the
-  write is rejected and the integration hides the option automatically.
-- **Automatic property-name discovery.** Loggamera publishes no list of
-  writable properties, so the first write probes a short list of likely
-  `SetProperty` names (`SetFanSpeed`, `SetFanMode`, `SetVentilation`, …)
-  and remembers whichever the API accepts. Wrong guesses are rejected by
-  the API without reaching the pump.
-- **New `fan_speed_property` option** to pin an exact property name if your
-  pump answers to something outside the candidate list.
-- **New `scripts/probe_loggamera_properties.py`** — a dependency-free
-  script that dumps every field your pump reports and, with
-  `--probe-write`, identifies the property name that writes the fan speed.
-  By default it re-writes the mode the pump is already in, so a successful
-  probe changes nothing.
-- **Diagnostics** now report which read field and write property were
-  resolved, so a diagnostics dump is enough to confirm the mapping.
+  `1 = low, 2 = normal, 3 = fast, 4 = on timer`. Mode 4 requires control
+  protocol 1.8 or later.
+- **New `fan_speed_property` option** to pin the exact `SetProperty` name.
+- **New `scripts/probe_loggamera_properties.py`** — a dependency-free script
+  that dumps every field a pump reports and hunts for the writable property
+  name. It runs a **positive control** (a known-good property written with
+  the pump's current value, so it is a no-op) and a **negative control** (a
+  deliberately absurd name), then groups every candidate by error signature.
+  The API returns the same opaque `"unsupported set parameter"` for both a
+  bad name and a bad value, so a candidate whose error *differs* from the
+  negative control is the real lead. `--extra-names` adds guesses,
+  `--probe-endpoints` tests other API versions, `--spacing` paces the writes.
+- **Diagnostics** report the resolved read field and write property.
+
+### Status against real hardware (RX95)
+- **Reading works.** The mode is reported as **`Fan state` (register 2069)**,
+  not `Fan speed`, so that leads the read candidate list. The pump's four
+  other fan fields are all percentages and none is the mode:
+  `Fan speed (current)` (momentary duty cycle), `Fan speed normal` (85 %),
+  `Fan speed slow reduction` (−20 %) and `Fan speed boost increase` (+10 %).
+  The effective level is `normal + the offset for the active mode`.
+- **Mode 4 = scheduled confirmed**, observed as the pump's active mode.
+- **Writing is not yet proven.** Every obvious `SetProperty` name is rejected
+  (`SetFanSpeed`, `SetFanMode`, `SetVentilation`, `SetVentilationMode`,
+  `SetFanLevel`, `SetFanSpeedMode`, `SetFanState`). The entity therefore
+  functions as a correct read today; the write path activates as soon as the
+  right name is known, via the `fan_speed_property` option or a new default.
 
 ### Changed
-- `async_set_property` accepts an `attempts` override. Probing uses a
-  single attempt so a rejected name fails fast instead of waiting out the
-  60-second retry; ordinary writes keep the existing retry behaviour.
+- `async_set_property` accepts an `attempts` override. Probing uses a single
+  attempt so a rejected name fails fast instead of waiting out the 60-second
+  retry; ordinary writes keep the existing retry behaviour.
+- A candidate sweep that finds nothing is **not repeated** for the rest of
+  the session. Probing costs one API write per name, so retrying it on every
+  click wasted writes; the log points at the probe script instead.
+- A rejected write is not misread as "pre-1.8 pump". That inference is only
+  drawn when the property name is already known to work — otherwise the
+  failure says nothing about the pump's protocol generation.
 
 ## [2.11.0] – 2026-06-05
 

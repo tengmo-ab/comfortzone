@@ -217,6 +217,19 @@ där registret heter `Fan speed`:
 | Boost | `3` | Fast förhöjd hastighet |
 | Schemalagd (automatik) | `4` | Fläkten följer dygnsschemat i stället för en fast hastighet |
 
+Läget rapporteras tillbaka i fältet **`Fan state`** (register `2069`) —
+bekräftat på en RX95. Pumpen rapporterar fyra *andra* fläktfält som alla är
+procentvärden och inget av dem är läget:
+
+| Fält | Exempel | Betydelse |
+| :-- | --: | :-- |
+| `Fan speed (current)` | 85 % | Momentan varvtalsnivå |
+| `Fan speed normal` | 85 % | Nivå som används i normalläge |
+| `Fan speed slow reduction` | −20 % | Avdrag i lågläge |
+| `Fan speed boost increase` | +10 % | Påslag i boostläge |
+
+Effektiv nivå är alltså `normal + avdrag/påslag för aktivt läge`.
+
 Läge `4` finns bara på pumpar med styrprotokoll **1.8 eller senare**. På en
 äldre 1.6-pump avvisas skrivningen och integrationen döljer alternativet
 automatiskt. Schemat som läge 4 följer är samma som diagnostiksensorerna
@@ -224,21 +237,41 @@ automatiskt. Schemat som läge 4 följer är samma som diagnostiksensorerna
 
 ### Vilket property-namn används?
 
-Loggamera publicerar ingen lista över skrivbara properties, så integrationen
-provar en kort lista med troliga `SetProperty`-namn vid första skrivningen
-(`SetFanSpeed`, `SetFanMode`, `SetVentilation`, `SetVentilationMode`,
-`SetFanLevel`) och kommer ihåg det som accepteras. Ett namn API:t inte känner
-igen avvisas direkt utan att nå pumpen.
+> [!IMPORTANT]
+> **Läsning fungerar, skrivning är ännu inte bekräftad.** Integrationen visar
+> rätt fläktläge, men vilket `SetProperty`-namn som *skriver* registret är
+> fortfarande okänt. Alla uppenbara kandidater (`SetFanSpeed`, `SetFanMode`,
+> `SetVentilation`, `SetVentilationMode`, `SetFanLevel`, `SetFanSpeedMode`,
+> `SetFanState`) avvisas av API:t på en RX95.
 
-Vill du veta exakt vad *din* pump svarar på, kör probe-skriptet på
-HA-värden:
+Loggamera publicerar ingen lista över skrivbara properties. Integrationen
+provar därför en kort kandidatlista vid första skrivningen och kommer ihåg
+det som accepteras. Misslyckas hela svepet provas det **inte igen** under
+sessionen — i stället loggas en tydlig uppmaning att köra probe-skriptet.
+Läsningen av läget påverkas inte.
+
+Ett komplicerande drag i API:t: ett avvisat skrivförsök kommer tillbaka som
+**HTTP 200** med `{"Error": {"Message": "unsupported set parameter"}}`, vilket
+inte skiljer på "okänt propertynamn" och "okänt värde". Probe-skriptet löser
+det genom att först köra två kontroller — ett känt fungerande namn skrivet med
+det värde pumpen redan har (en no-op), och ett medvetet påhittat namn — och
+sedan gruppera alla kandidater efter felsignatur. En kandidat som ger ett
+*annat* fel än det påhittade namnet är ett verkligt spår.
+
+Kör probe-skriptet på HA-värden:
 
 ```bash
 # Dumpa allt pumpen rapporterar, med fläktrelaterade fält först
 python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345
 
-# Identifiera property-namnet som skriver fläkthastigheten
+# Kontroller + svep över ~45 kandidatnamn, grupperat efter felsignatur
 python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345 --probe-write
+
+# Lägg till egna gissningar
+python3 scripts/probe_loggamera_properties.py ... --probe-write --extra-names SetFan,setFanSpeed
+
+# Kolla om andra endpoints/API-versioner accepterar fler properties
+python3 scripts/probe_loggamera_properties.py ... --probe-endpoints
 ```
 
 Skriptet skriver som standard tillbaka det läge pumpen redan står i, så en

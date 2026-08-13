@@ -225,15 +225,28 @@ FAN_SPEED_PROPERTY_CANDIDATES: tuple[str, ...] = (
     "SetFanLevel",
 )
 
-# Candidate ClearTextNames that may carry the *configured* fan mode (1-4) as
-# opposed to the momentary duty cycle in "Fan speed (current)" (a percentage).
-# Read in order; the first entry that parses to an integer within 1-4 wins.
+# ClearTextNames that may carry the *configured* fan mode (1-4). Read in
+# order; the first entry that parses to an integer within 1-4 wins.
+#
+# Confirmed against an RX95: the mode is reported as "Fan state" (register
+# 2069), which is why it leads this list. The pump also reports four *other*
+# fan fields, all percentages, none of which is the mode:
+#
+#   Fan speed (current)      85 %   momentary duty cycle
+#   Fan speed normal         85 %   duty cycle used in normal mode
+#   Fan speed slow reduction -20 %  offset applied in low mode
+#   Fan speed boost increase +10 %  offset applied in boost mode
+#
+# So the effective duty cycle is "normal + the offset for the active mode".
+# The remaining entries are kept as fallbacks for firmwares that name the
+# register differently; the 1-4 range check is what stops a percentage from
+# being mistaken for a mode.
 FAN_MODE_READ_CANDIDATES: tuple[str, ...] = (
+    "Fan state",
     "Fan speed",
     "Fan speed setting",
     "Fan mode",
     "Ventilation mode",
-    "Fan state",
 )
 
 # Maps binary_sensor suffix -> ClearTextName
