@@ -238,6 +238,13 @@ automatiskt. Schemat som läge 4 följer är samma som diagnostiksensorerna
 ### Vilket property-namn används?
 
 > [!IMPORTANT]
+> **Läsning fungerar, skrivning är ännu inte löst.** Ett svep över 46
+> kandidatnamn på en RX95 gav samma svar för alla — samma svar som för ett
+> medvetet påhittat namn. Den positiva kontrollen (`SetHeatCurve`) gick
+> igenom, så API-nyckeln får skriva; fläkt-propertyn finns helt enkelt inte
+> under något gissat namn. Se **Nästa steg** nedan.
+
+> [!NOTE]
 > **Läsning fungerar, skrivning är ännu inte bekräftad.** Integrationen visar
 > rätt fläktläge, men vilket `SetProperty`-namn som *skriver* registret är
 > fortfarande okänt. Alla uppenbara kandidater (`SetFanSpeed`, `SetFanMode`,
@@ -272,7 +279,31 @@ python3 scripts/probe_loggamera_properties.py ... --probe-write --extra-names Se
 
 # Kolla om andra endpoints/API-versioner accepterar fler properties
 python3 scripts/probe_loggamera_properties.py ... --probe-endpoints
+
+# Svep mot v2-endpointen i stället, eller mot en egen namnlista
+python3 scripts/probe_loggamera_properties.py ... --probe-write \
+    --endpoint https://platform.loggamera.se/Api/v2/SetProperty
+python3 scripts/probe_loggamera_properties.py ... --probe-write --names-file mina-namn.txt
 ```
+
+### Nästa steg: läs av vad appen faktiskt skickar
+
+Gissningar är uttömda. Det som återstår är att observera en klient som
+bevisligen kan styra fläkten:
+
+1. **Loggamera-portalen + DevTools.** Logga in på
+   [portal.loggamera.se](https://portal.loggamera.se), öppna
+   **DevTools → Network** (F12), filtrera på `Fetch/XHR`, och ändra
+   fläktläget i portalen. Anropet som dyker upp innehåller det exakta
+   `PropertyName`:et. Erbjuder portalen ingen fläktstyrning är appen enda
+   klienten som har den — gå till punkt 2.
+2. **Fråga Loggamera support.** Det är deras API och deras app gör det
+   redan. Fråga rakt ut vilket `PropertyName` `SetProperty` tar för
+   fläktläget på en Comfortzone-pump, och nämn att `Fan state` (register
+   2069) är fältet som läses tillbaka.
+
+Har du namnet: fyll i det under **Fan speed property name** i alternativen,
+eller öppna ett issue så blir det default.
 
 Skriptet skriver som standard tillbaka det läge pumpen redan står i, så en
 lyckad probe ändrar ingenting. Hittar du ett namn utanför kandidatlistan,

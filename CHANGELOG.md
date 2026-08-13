@@ -39,11 +39,18 @@ API documentation.
   `Fan speed slow reduction` (−20 %) and `Fan speed boost increase` (+10 %).
   The effective level is `normal + the offset for the active mode`.
 - **Mode 4 = scheduled confirmed**, observed as the pump's active mode.
-- **Writing is not yet proven.** Every obvious `SetProperty` name is rejected
-  (`SetFanSpeed`, `SetFanMode`, `SetVentilation`, `SetVentilationMode`,
-  `SetFanLevel`, `SetFanSpeedMode`, `SetFanState`). The entity therefore
-  functions as a correct read today; the write path activates as soon as the
-  right name is known, via the `fan_speed_property` option or a new default.
+- **Writing is unsolved.** A 46-name sweep produced one single response
+  signature — identical to the negative control's — so none of those names
+  exists. The positive control (`SetHeatCurve`) was accepted on both the v1
+  and v2 endpoints, which rules out a permissions problem: the API key writes
+  fine, the fan property simply is not exposed under any guessed name.
+  `SetValue`, `ExecuteCommand` and `Command` endpoints return 404. The entity
+  therefore functions as a correct read today; the write path activates as
+  soon as the right name is known, via the `fan_speed_property` option or a
+  new default. Next step is observing the Loggamera portal's own network
+  traffic, or asking Loggamera support directly.
+- Probe script gained `--endpoint` (sweep against v2) and `--names-file`
+  (sweep an arbitrary candidate list).
 
 ### Changed
 - `async_set_property` accepts an `attempts` override. Probing uses a single

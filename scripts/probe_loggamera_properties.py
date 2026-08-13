@@ -246,7 +246,7 @@ def try_write(api_key: str, device_id: int, name: str, value: object,
 
 
 def run_controls(api_key: str, device_id: int, values: list[dict],
-                 spacing: float) -> str | None:
+                 spacing: float, url: str = API_SETPROPERTY) -> str | None:
     """Run positive and negative controls. Returns the 'no such name' signature."""
     print("\n=== Controls ===")
     print("Establishing what success and 'unknown property' look like on this "
@@ -267,7 +267,9 @@ def run_controls(api_key: str, device_id: int, values: list[dict],
             print(f"  skipped   {prop_name:20} (cannot parse current value {current!r})")
             continue
 
-        ok, signature, _ = try_write(api_key, device_id, prop_name, current_value)
+        ok, signature, _ = try_write(
+            api_key, device_id, prop_name, current_value, url=url
+        )
         print(f"  {'ACCEPTED' if ok else 'rejected':8}  {prop_name:20} "
               f"(no-op write of current value {current_value}) -> {signature}")
         positive_ok |= ok
@@ -279,7 +281,9 @@ def run_controls(api_key: str, device_id: int, values: list[dict],
               "permission in the Loggamera portal. The sweep below cannot "
               "distinguish anything until this passes.")
 
-    ok, negative_signature, _ = try_write(api_key, device_id, BOGUS_NAME, 1)
+    ok, negative_signature, _ = try_write(
+        api_key, device_id, BOGUS_NAME, 1, url=url
+    )
     print(f"  {'ACCEPTED' if ok else 'rejected':8}  {BOGUS_NAME[:20]:20} "
           f"(deliberately absurd name) -> {negative_signature}")
     if ok:
@@ -294,17 +298,18 @@ def run_controls(api_key: str, device_id: int, values: list[dict],
 
 
 def probe_writes(api_key: str, device_id: int, value: int, names: list[str],
-                 negative_signature: str | None, spacing: float) -> None:
+                 negative_signature: str | None, spacing: float,
+                 url: str = API_SETPROPERTY) -> None:
     """Try each candidate PropertyName and group the outcomes by signature."""
     print(f"\n=== Probing {len(names)} SetProperty names with Value={value} "
-          f"({FAN_MODE_NAMES.get(value, '?')}) ===")
+          f"({FAN_MODE_NAMES.get(value, '?')}) against {url} ===")
     accepted: list[str] = []
     by_signature: dict[str, list[str]] = {}
 
     for index, name in enumerate(names):
         if index:
             time.sleep(spacing)
-        ok, signature, _body = try_write(api_key, device_id, name, value)
+        ok, signature, _body = try_write(api_key, device_id, name, value, url=url)
         by_signature.setdefault(signature, []).append(name)
         flag = ""
         if not ok and negative_signature and signature != negative_signature:
@@ -396,6 +401,17 @@ def main() -> None:
         help="Comma-separated extra property names to add to the sweep",
     )
     parser.add_argument(
+        "--names-file",
+        help="Path to a file of candidate property names, one per line "
+             "(# starts a comment). Replaces the built-in list.",
+    )
+    parser.add_argument(
+        "--endpoint",
+        default=API_SETPROPERTY,
+        help=f"SetProperty endpoint to sweep against (default {API_SETPROPERTY}). "
+             "Use the v2 URL to check whether it exposes more properties.",
+    )
+    parser.add_argument(
         "--spacing",
         type=float,
         default=DEFAULT_SPACING_SEC,
@@ -428,17 +444,28 @@ def main() -> None:
               f"{FAN_MODE_NAMES[value]}) so a successful write is a no-op.")
 
     negative_signature = run_controls(
-        args.api_key, args.device_id, values, args.spacing
+        args.api_key, args.device_id, values, args.spacing, url=args.endpoint
     )
 
-    names = list(WRITE_CANDIDATES)
+    if args.names_file:
+        with open(args.names_file, encoding="utf-8") as handle:
+            names = [
+                line.split("#", 1)[0].strip()
+                for line in handle
+            ]
+            names = [name for name in names if name]
+        print(f"\nLoaded {len(names)} candidate names from {args.names_file}")
+    else:
+        names = list(WRITE_CANDIDATES)
+
     for extra in args.extra_names.split(","):
         extra = extra.strip()
         if extra and extra not in names:
             names.append(extra)
 
     probe_writes(
-        args.api_key, args.device_id, value, names, negative_signature, args.spacing
+        args.api_key, args.device_id, value, names, negative_signature,
+        args.spacing, url=args.endpoint,
     )
 
 
