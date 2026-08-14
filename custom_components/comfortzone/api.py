@@ -61,6 +61,11 @@ class ComfortzoneApiClient:
         # every subsequent user action — the user is pointed at the probe
         # script and the explicit property option instead.
         self._exhausted_probes: set[tuple[str, ...]] = set()
+        # Which value form the API accepted, as an index into the per-option
+        # tuple of forms (e.g. 0 = the string token "Low", 1 = the integer 1).
+        # The pump takes one vocabulary for every mode, so the index resolved
+        # for one option is reused for the rest.
+        self._resolved_value_styles: dict[tuple[str, ...], int] = {}
 
     async def async_get_data(self) -> Optional[dict[str, Any]]:
         """Fetch data from the RawData endpoint. Returns None when API is busy."""
@@ -285,6 +290,75 @@ class ComfortzoneApiClient:
     def probe_exhausted(self, property_names: Sequence[str]) -> bool:
         """True if every candidate in ``property_names`` was already rejected."""
         return tuple(property_names) in self._exhausted_probes
+
+    def resolved_value_style(self, property_names: Sequence[str]) -> Optional[int]:
+        """Return the index of the value form the API accepted, if known."""
+        return self._resolved_value_styles.get(tuple(property_names))
+
+    async def async_set_first_supported_combination(
+        self, property_names: Sequence[str], values: Sequence[Any]
+    ) -> Optional[tuple[str, Any]]:
+        """Write using the first ``(PropertyName, value)`` pair the API accepts.
+
+        Needed because the fan has *two* unknowns rather than one: which name
+        writes it, and which value vocabulary it takes. The API answers a bad
+        value with the same opaque error as a bad name, so neither can be
+        inferred from a rejection — both have to be tried.
+
+        ``values`` holds the forms for a single option, most-likely first.
+        Once a pair works, both the name and the value form's index are
+        remembered, so later writes go straight to the right combination.
+
+        Returns the accepted ``(name, value)``, or ``None`` if all failed.
+        """
+        if not property_names or not values:
+            return None
+
+        cache_key = tuple(property_names)
+        name = self._resolved_properties.get(cache_key)
+        style = self._resolved_value_styles.get(cache_key)
+        if name is not None and style is not None and style < len(values):
+            value = values[style]
+            if await self.async_set_property(name, value):
+                return name, value
+            return None
+
+        if cache_key in self._exhausted_probes:
+            _LOGGER.debug(
+                "Skipping probe: every candidate in %s was already rejected",
+                ", ".join(cache_key),
+            )
+            return None
+
+        for candidate_name in property_names:
+            for index, value in enumerate(values):
+                if await self.async_set_property(candidate_name, value, attempts=1):
+                    _LOGGER.info(
+                        "Resolved Comfortzone write: property '%s' with value "
+                        "form %r (index %d)",
+                        candidate_name,
+                        value,
+                        index,
+                    )
+                    self._resolved_properties[cache_key] = candidate_name
+                    self._resolved_value_styles[cache_key] = index
+                    return candidate_name, value
+                _LOGGER.debug(
+                    "'%s' = %r rejected, trying next combination",
+                    candidate_name,
+                    value,
+                )
+
+        self._exhausted_probes.add(cache_key)
+        _LOGGER.warning(
+            "No combination of (%s) x (%s) was accepted by the API. Not probing "
+            "again for this session. Run scripts/probe_loggamera_properties.py "
+            "--probe-values to find what your pump accepts, then set the name "
+            "via the integration options",
+            ", ".join(cache_key),
+            ", ".join(repr(v) for v in values),
+        )
+        return None
 
     async def async_set_first_supported_property(
         self, property_names: Sequence[str], value: Any

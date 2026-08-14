@@ -91,6 +91,25 @@ WRITE_CANDIDATES = [
 
 FAN_MODE_NAMES = {1: "low", 2: "normal", 3: "boost", 4: "scheduled"}
 
+# Loggamera support states the fan is written with SetFanState taking string
+# values (Off / Low / Normal / High). The earlier sweep tried SetFanState with
+# the integer 4 and was rejected -- but the API rejects a bad *value* with the
+# same message as a bad *name*, so that told us nothing about the name.
+# --probe-values settles it by writing each token and reading the mode back.
+VALUE_PROPERTY_DEFAULT = "SetFanState"
+
+# Tokens to try, most likely first. "Off" is included here (unlike in the
+# integration) because this probe restores the original mode afterwards and
+# the point is to learn the full vocabulary -- but it is placed last so an
+# interrupted run is unlikely to leave the fan stopped.
+VALUE_TOKENS = [
+    "Low", "Normal", "High",
+    "Boost", "Auto", "Timer", "Schedule", "Scheduled",
+    "low", "normal", "high",
+    1, 2, 3, 4,
+    "Off",
+]
+
 # Properties known to work, paired with the field holding their current value
 # so the probe can write a value the pump already has (a no-op).
 CONTROL_PROPERTIES = [
@@ -345,6 +364,75 @@ def probe_writes(api_key: str, device_id: int, value: int, names: list[str],
               "notes in the PR about asking Loggamera support directly.")
 
 
+def probe_values(api_key: str, device_id: int, prop_name: str,
+                 tokens: list, spacing: float, url: str = API_SETPROPERTY,
+                 settle: float = 8.0) -> None:
+    """Write each candidate value and read the resulting mode back.
+
+    This is the experiment that produces the real mapping: the pump reports
+    the mode as an integer in ``Fan state``, so writing a token and re-reading
+    that field says exactly which token means which mode -- something no
+    amount of guessing at names could establish.
+
+    The pump's original mode is restored at the end.
+    """
+    values = fetch_values(api_key, device_id)
+    original = current_fan_mode(values)
+    print(f"\n=== Probing values for {prop_name} against {url} ===")
+    if original is None:
+        print("  Could not read the pump's current fan mode, so the original "
+              "setting cannot be restored afterwards. Aborting -- re-run with "
+              "an explicit --value if you want to proceed anyway.")
+        return
+
+    print(f"  Current mode: {original} ({FAN_MODE_NAMES[original]}). This will "
+          f"be restored when the probe finishes.")
+    print(f"  WARNING: this changes the fan mode for real, briefly, {len(tokens)} times.\n")
+
+    accepted: list[tuple[object, int | None]] = []
+    for index, token in enumerate(tokens):
+        if index:
+            time.sleep(spacing)
+        ok, signature, _ = try_write(api_key, device_id, prop_name, token, url=url)
+        if not ok:
+            print(f"  rejected  {token!r:14} -> {signature[:60]}")
+            continue
+
+        # Give the platform a moment to propagate before reading back.
+        time.sleep(settle)
+        mode_after = current_fan_mode(fetch_values(api_key, device_id))
+        label = FAN_MODE_NAMES.get(mode_after, "?") if mode_after else "unchanged/unknown"
+        print(f"  ACCEPTED  {token!r:14} -> Fan state = {mode_after} ({label})")
+        accepted.append((token, mode_after))
+
+    # Restore.
+    print(f"\n  Restoring original mode {original} ({FAN_MODE_NAMES[original]})...")
+    restored = False
+    for token, mode_after in accepted:
+        if mode_after == original:
+            ok, _, _ = try_write(api_key, device_id, prop_name, token, url=url)
+            if ok:
+                print(f"  Restored with {token!r}.")
+                restored = True
+            break
+    if not restored:
+        print("  !! Could not restore automatically -- no accepted token mapped "
+              f"back to mode {original}. Set the fan mode manually in the "
+              "Comfortzone app.")
+
+    print("\n--- Value mapping ---")
+    if accepted:
+        for token, mode_after in accepted:
+            print(f"  {token!r:14} => Fan state {mode_after} "
+                  f"({FAN_MODE_NAMES.get(mode_after, '?')})")
+        print(f"\n'{prop_name}' is the writable property. Set it as "
+              "'fan_speed_property' in the integration options and report the "
+              "mapping above so it can become the default.")
+    else:
+        print(f"  No token was accepted for '{prop_name}'. Try another property "
+              "name with --value-property, or --extra-names to sweep names again.")
+
+
 def probe_endpoints(api_key: str, device_id: int, values: list[dict],
                     spacing: float) -> None:
     """Check which endpoints accept a known-good property."""
@@ -401,6 +489,25 @@ def main() -> None:
         help="Comma-separated extra property names to add to the sweep",
     )
     parser.add_argument(
+        "--probe-values",
+        action="store_true",
+        help="Write each candidate VALUE to a single property and read the "
+             "mode back, to learn the value vocabulary. Changes the fan mode "
+             "for real, then restores it.",
+    )
+    parser.add_argument(
+        "--value-property",
+        default=VALUE_PROPERTY_DEFAULT,
+        help=f"Property name to use with --probe-values (default {VALUE_PROPERTY_DEFAULT})",
+    )
+    parser.add_argument(
+        "--settle",
+        type=float,
+        default=8.0,
+        help="Seconds to wait after a write before reading the mode back "
+             "(default 8)",
+    )
+    parser.add_argument(
         "--names-file",
         help="Path to a file of candidate property names, one per line "
              "(# starts a comment). Replaces the built-in list.",
@@ -426,8 +533,14 @@ def main() -> None:
     if args.probe_endpoints:
         probe_endpoints(args.api_key, args.device_id, values, args.spacing)
 
+    if args.probe_values:
+        probe_values(
+            args.api_key, args.device_id, args.value_property, VALUE_TOKENS,
+            args.spacing, url=args.endpoint, settle=args.settle,
+        )
+
     if not args.probe_write:
-        if not args.probe_endpoints:
+        if not (args.probe_endpoints or args.probe_values):
             print("\nRe-run with --probe-write to identify the writable property name.")
         return
 

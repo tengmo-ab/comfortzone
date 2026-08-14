@@ -39,18 +39,19 @@ API documentation.
   `Fan speed slow reduction` (−20 %) and `Fan speed boost increase` (+10 %).
   The effective level is `normal + the offset for the active mode`.
 - **Mode 4 = scheduled confirmed**, observed as the pump's active mode.
-- **Writing is unsolved.** A 46-name sweep produced one single response
-  signature — identical to the negative control's — so none of those names
-  exists. The positive control (`SetHeatCurve`) was accepted on both the v1
-  and v2 endpoints, which rules out a permissions problem: the API key writes
-  fine, the fan property simply is not exposed under any guessed name.
-  `SetValue`, `ExecuteCommand` and `Command` endpoints return 404. The entity
-  therefore functions as a correct read today; the write path activates as
-  soon as the right name is known, via the `fan_speed_property` option or a
-  new default. Next step is observing the Loggamera portal's own network
-  traffic, or asking Loggamera support directly.
-- Probe script gained `--endpoint` (sweep against v2) and `--names-file`
-  (sweep an arbitrary candidate list).
+- **Writing: Loggamera support says the property is `SetFanState`, taking
+  *string* values (`Off` / `Low` / `Normal` / `High`)** rather than the
+  integers 1–4 the pump reports back. The earlier 46-name sweep *did* try
+  `SetFanState` — with the integer `4` — and was rejected, so the sweep's
+  "none of these names exists" conclusion was wrong: the API answers a bad
+  **value** with the same opaque `"unsupported set parameter"` it gives a bad
+  **name**, which the negative control could not distinguish. The name and
+  the value vocabulary are now resolved together.
+- The positive control (`SetHeatCurve`) was accepted on both the v1 and v2
+  endpoints, ruling out a permissions problem. `SetValue`, `ExecuteCommand`
+  and `Command` return 404, so v1/v2 SetProperty is the whole write surface.
+- Scheduled mode's token is still unconfirmed (`Auto` is the current guess).
+  `--probe-values` resolves the real vocabulary empirically.
 
 ### Changed
 - `async_set_property` accepts an `attempts` override. Probing uses a single
@@ -62,6 +63,17 @@ API documentation.
 - A rejected write is not misread as "pre-1.8 pump". That inference is only
   drawn when the property name is already known to work — otherwise the
   failure says nothing about the pump's protocol generation.
+- Writes now resolve a `(PropertyName, value form)` **pair**, not just a name:
+  `async_set_first_supported_combination` tries each name against each value
+  form and caches both. The value form's index is shared across modes, so only
+  the first write pays for discovery.
+- Probe script gained `--probe-values`: writes each candidate token to one
+  property, reads `Fan state` back to learn what mode it produced, and
+  restores the pump's original mode afterwards. This is the experiment that
+  produces the real token → mode table. `Off` is included there but
+  deliberately excluded from the integration — on an exhaust-air pump the fan
+  is the heat source, so stopping it should be a deliberate act, not a
+  dropdown entry.
 
 ## [2.11.0] – 2026-06-05
 

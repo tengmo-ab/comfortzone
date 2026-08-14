@@ -32,6 +32,7 @@ from .const import (
     FAN_MODE_READ_CANDIDATES,
     FAN_MODE_SCHEDULE,
     FAN_MODE_VALUE_TO_OPTION,
+    FAN_MODE_WRITE_VALUES,
     FAN_SPEED_PROPERTY_CANDIDATES,
 )
 from .entity import OptimisticConfirmedMixin, build_device_info, device_unique_id
@@ -92,9 +93,11 @@ class ComfortzoneFanSpeedSelect(OptimisticConfirmedMixin, CoordinatorEntity, Sel
 
     * **Which ClearTextName carries the setting.** Resolved by
       :func:`_read_fan_mode` against a candidate list.
-    * **Which SetProperty name writes it.** Resolved on the first write by
-      :meth:`ComfortzoneApiClient.async_set_first_supported_property`, unless
-      the user pinned one with the ``fan_speed_property`` option.
+    * **Which SetProperty name writes it, and in what value vocabulary.**
+      Both are resolved together on the first write by
+      :meth:`ComfortzoneApiClient.async_set_first_supported_combination`,
+      since the API rejects a bad value and a bad name identically. The name
+      can be pinned with the ``fan_speed_property`` option.
 
     Both resolutions are surfaced as state attributes so a user can report
     what their pump actually answered to.
@@ -143,17 +146,18 @@ class ComfortzoneFanSpeedSelect(OptimisticConfirmedMixin, CoordinatorEntity, Sel
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose what the runtime probing resolved, for troubleshooting."""
         configured = self.entry.options.get(CONF_FAN_SPEED_PROPERTY)
-        resolved = configured or self._client.resolved_property(
-            FAN_SPEED_PROPERTY_CANDIDATES
-        )
+        names = (configured,) if configured else FAN_SPEED_PROPERTY_CANDIDATES
+        resolved = self._client.resolved_property(names)
+        style = self._client.resolved_value_style(names)
         return {
             "read_field": self._read_field,
             "write_property": resolved,
             "write_property_source": "option" if configured else "auto-detected",
             "write_supported": bool(resolved),
-            "candidates_exhausted": self._client.probe_exhausted(
-                FAN_SPEED_PROPERTY_CANDIDATES
+            "write_value_form": (
+                None if style is None else ("string" if style == 0 else "integer")
             ),
+            "candidates_exhausted": self._client.probe_exhausted(names),
             "scheduled_mode_supported": self._schedule_supported,
         }
 
@@ -205,18 +209,17 @@ class ComfortzoneFanSpeedSelect(OptimisticConfirmedMixin, CoordinatorEntity, Sel
             _LOGGER.error("Unknown fan speed option '%s'", option)
             return
 
+        # Loggamera support says the property is SetFanState and takes string
+        # values (Low / Normal / High), while the pump reports the mode back
+        # as the integer 1-4. Try the documented string first, then the
+        # integer, since neither can be inferred from a rejection.
+        write_values = FAN_MODE_WRITE_VALUES.get(option, (value,))
         configured = self.entry.options.get(CONF_FAN_SPEED_PROPERTY)
+        names = (configured,) if configured else FAN_SPEED_PROPERTY_CANDIDATES
         try:
-            if configured:
-                accepted = (
-                    configured
-                    if await self._client.async_set_property(configured, value)
-                    else None
-                )
-            else:
-                accepted = await self._client.async_set_first_supported_property(
-                    FAN_SPEED_PROPERTY_CANDIDATES, value
-                )
+            accepted = await self._client.async_set_first_supported_combination(
+                names, write_values
+            )
         except (ComfortzoneApiCommandError, ComfortzoneApiClientError) as err:
             _LOGGER.error("API error setting fan speed: %s", err)
             return
@@ -225,8 +228,8 @@ class ComfortzoneFanSpeedSelect(OptimisticConfirmedMixin, CoordinatorEntity, Sel
             # A rejection only says "pre-1.8 pump" if we already know the
             # property name is good — otherwise the write failed because the
             # name is wrong, which says nothing about the pump's protocol.
-            name_is_known = bool(configured) or bool(
-                self._client.resolved_property(FAN_SPEED_PROPERTY_CANDIDATES)
+            name_is_known = bool(
+                self._client.resolved_property(names)
             )
             if name_is_known and value == FAN_MODE_SCHEDULE and self._schedule_supported:
                 # Every other mode is accepted by both protocol generations, so
@@ -240,12 +243,13 @@ class ComfortzoneFanSpeedSelect(OptimisticConfirmedMixin, CoordinatorEntity, Sel
                 self.async_write_ha_state()
             else:
                 _LOGGER.error(
-                    "Failed to set fan speed to '%s': no working SetProperty name "
-                    "is known for this pump. Run "
-                    "scripts/probe_loggamera_properties.py --probe-write to find "
-                    "it, then set it via the '%s' option. Reading the current "
-                    "mode continues to work.",
+                    "Failed to set fan speed to '%s'. Tried %s with values %s. "
+                    "Run scripts/probe_loggamera_properties.py --probe-values to "
+                    "find what your pump accepts, then set the name via the '%s' "
+                    "option. Reading the current mode continues to work.",
                     option,
+                    ", ".join(names),
+                    ", ".join(repr(v) for v in write_values),
                     CONF_FAN_SPEED_PROPERTY,
                 )
             return

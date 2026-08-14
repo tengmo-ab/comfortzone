@@ -238,34 +238,21 @@ automatiskt. Schemat som läge 4 följer är samma som diagnostiksensorerna
 ### Vilket property-namn används?
 
 > [!IMPORTANT]
-> **Läsning fungerar, skrivning är ännu inte löst.** Ett svep över 46
-> kandidatnamn på en RX95 gav samma svar för alla — samma svar som för ett
-> medvetet påhittat namn. Den positiva kontrollen (`SetHeatCurve`) gick
-> igenom, så API-nyckeln får skriva; fläkt-propertyn finns helt enkelt inte
-> under något gissat namn. Se **Nästa steg** nedan.
+> **Skrivnamnet enligt Loggamera support: `SetFanState`, med *sträng*värden
+> (`Off` / `Low` / `Normal` / `High`) — inte heltalen 1–4 som pumpen
+> rapporterar tillbaka.** Integrationen provar därför strängen först och
+> heltalet som fallback. Värdet för schemalagt läge är ännu inte bekräftat.
 
-> [!NOTE]
-> **Läsning fungerar, skrivning är ännu inte bekräftad.** Integrationen visar
-> rätt fläktläge, men vilket `SetProperty`-namn som *skriver* registret är
-> fortfarande okänt. Alla uppenbara kandidater (`SetFanSpeed`, `SetFanMode`,
-> `SetVentilation`, `SetVentilationMode`, `SetFanLevel`, `SetFanSpeedMode`,
-> `SetFanState`) avvisas av API:t på en RX95.
+Loggamera publicerar ingen lista över skrivbara properties. Ett svep över 46
+namn gav först ingenting — men den slutsatsen var för stark: API:t svarar
+`"unsupported set parameter"` **både** när namnet är okänt och när värdet är
+fel, så `SetFanState` avvisades bara för att vi skickade heltalet `4`.
 
-Loggamera publicerar ingen lista över skrivbara properties. Integrationen
-provar därför en kort kandidatlista vid första skrivningen och kommer ihåg
-det som accepteras. Misslyckas hela svepet provas det **inte igen** under
-sessionen — i stället loggas en tydlig uppmaning att köra probe-skriptet.
-Läsningen av läget påverkas inte.
+Det är därför integrationen provar kombinationer av namn **och** värdeform,
+och kommer ihåg vilken kombination som fungerade. Misslyckas hela svepet
+provas det inte igen under sessionen. Läsningen av läget påverkas inte.
 
-Ett komplicerande drag i API:t: ett avvisat skrivförsök kommer tillbaka som
-**HTTP 200** med `{"Error": {"Message": "unsupported set parameter"}}`, vilket
-inte skiljer på "okänt propertynamn" och "okänt värde". Probe-skriptet löser
-det genom att först köra två kontroller — ett känt fungerande namn skrivet med
-det värde pumpen redan har (en no-op), och ett medvetet påhittat namn — och
-sedan gruppera alla kandidater efter felsignatur. En kandidat som ger ett
-*annat* fel än det påhittade namnet är ett verkligt spår.
-
-Kör probe-skriptet på HA-värden:
+Kör probe-skriptet på HA-värden:Kör probe-skriptet på HA-värden:
 
 ```bash
 # Dumpa allt pumpen rapporterar, med fläktrelaterade fält först
@@ -277,6 +264,12 @@ python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 1
 # Lägg till egna gissningar
 python3 scripts/probe_loggamera_properties.py ... --probe-write --extra-names SetFan,setFanSpeed
 
+# Ta reda på vilka VÄRDEN pumpen accepterar, och vad varje värde ger för läge.
+# Skriver varje token, läser tillbaka "Fan state", och återställer ditt
+# ursprungsläge när den är klar.
+python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345 \
+    --probe-values
+
 # Kolla om andra endpoints/API-versioner accepterar fler properties
 python3 scripts/probe_loggamera_properties.py ... --probe-endpoints
 
@@ -286,24 +279,14 @@ python3 scripts/probe_loggamera_properties.py ... --probe-write \
 python3 scripts/probe_loggamera_properties.py ... --probe-write --names-file mina-namn.txt
 ```
 
-### Nästa steg: läs av vad appen faktiskt skickar
+`--probe-values` är experimentet som avgör saken: den skriver varje token,
+läser tillbaka `Fan state` och bygger den faktiska tabellen token → läge.
+Den ändrar fläktläget på riktigt en kort stund per token och **återställer
+ditt ursprungsläge** när den är klar.
 
-Gissningar är uttömda. Det som återstår är att observera en klient som
-bevisligen kan styra fläkten:
-
-1. **Loggamera-portalen + DevTools.** Logga in på
-   [portal.loggamera.se](https://portal.loggamera.se), öppna
-   **DevTools → Network** (F12), filtrera på `Fetch/XHR`, och ändra
-   fläktläget i portalen. Anropet som dyker upp innehåller det exakta
-   `PropertyName`:et. Erbjuder portalen ingen fläktstyrning är appen enda
-   klienten som har den — gå till punkt 2.
-2. **Fråga Loggamera support.** Det är deras API och deras app gör det
-   redan. Fråga rakt ut vilket `PropertyName` `SetProperty` tar för
-   fläktläget på en Comfortzone-pump, och nämn att `Fan state` (register
-   2069) är fältet som läses tillbaka.
-
-Har du namnet: fyll i det under **Fan speed property name** i alternativen,
-eller öppna ett issue så blir det default.
+`Off` finns med i probens tokenlista men **inte** i integrationen. På en
+frånluftsvärmepump är fläkten värmekällan, så att stanna den är ett beslut
+man tar medvetet — inte något man ska kunna råka göra från en dropdown.
 
 Skriptet skriver som standard tillbaka det läge pumpen redan står i, så en
 lyckad probe ändrar ingenting. Hittar du ett namn utanför kandidatlistan,

@@ -211,19 +211,40 @@ FAN_MODE_VALUE_TO_OPTION: dict[int, str] = {
     value: option for option, value in FAN_MODE_OPTIONS.items()
 }
 
-# Loggamera does not publish the list of writable properties, and the fan
-# setting is absent from every public description of the API — it was found
-# by observing that the Android app can change it. We therefore probe a short
-# list of plausible PropertyName strings once, in this order, and remember
-# whichever one the API accepts. Users whose pump answers to something else
-# can pin the exact string with the `fan_speed_property` option.
+# Loggamera support states the fan is written with **SetFanState**, taking
+# *string* values (Off / Low / Normal / High) rather than the numeric 1-4 the
+# pump reports back. That distinction matters: an earlier 46-name sweep tried
+# SetFanState with the integer 4 and was rejected, but the API answers a bad
+# *value* with the same opaque "unsupported set parameter" it gives a bad
+# *name* — so the rejection never meant the name was wrong.
+#
+# SetFanState therefore leads the list, and each option carries several value
+# forms tried in order (see FAN_MODE_WRITE_VALUES). Users whose pump answers
+# to something else can pin the name with the `fan_speed_property` option.
 FAN_SPEED_PROPERTY_CANDIDATES: tuple[str, ...] = (
+    "SetFanState",
     "SetFanSpeed",
     "SetFanMode",
-    "SetVentilation",
-    "SetVentilationMode",
-    "SetFanLevel",
 )
+
+# Value forms per option, tried in order until the API accepts one.
+#
+# ORDERING IS LOAD-BEARING: every option must list its forms in the same
+# order (string token first, numeric second), because the client caches the
+# *index* of the winning form and reuses it for the other options.
+#
+# "Off" is deliberately absent. Support lists it as a valid value, but this is
+# an exhaust-air heat pump — the fan is its heat source, so stopping it is a
+# decision to make explicitly, not something to stumble into while probing.
+# Scheduled mode's token is still unconfirmed; the candidates below are
+# guesses, and scripts/probe_loggamera_properties.py --probe-values resolves
+# the real vocabulary by writing each token and reading the mode back.
+FAN_MODE_WRITE_VALUES: dict[str, tuple] = {
+    "low": ("Low", FAN_MODE_LOW),
+    "normal": ("Normal", FAN_MODE_NORMAL),
+    "boost": ("High", FAN_MODE_BOOST),
+    "schedule": ("Auto", FAN_MODE_SCHEDULE),
+}
 
 # ClearTextNames that may carry the *configured* fan mode (1-4). Read in
 # order; the first entry that parses to an integer within 1-4 wins.
