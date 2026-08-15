@@ -56,6 +56,19 @@ API documentation.
   "jag tror", so this was a guess rather than a lookup. The property remains
   unknown; the integration still ships `SetFanState` + strings first since it
   costs nothing when it fails and the read path is unaffected.
+- **Traffic analysis of the Android app (PCAPdroid, non-rooted S24) suggests
+  the fan may not be in the public API at all.** During app startup the app
+  sent 156 KB across six connections to `portal.loggamera.se` and pulled
+  168 KB from `www.googletagmanager.com`, alongside `region1.google-analytics`
+  and `content-autofill.googleapis.com` — the last being Android WebView's
+  form autofill. That combination means a WebView rendering the portal, not a
+  native REST client. `platform.loggamera.se` saw a single 2 KB connection,
+  and its TLS ClientHello advertises only `http/1.1` while the portal's
+  negotiates `h2`: two different HTTP stacks in one app. Changing the fan mode
+  contacted both hosts, so which one carries the write is not yet established
+  — the capture was not TLS-decrypted. But if the portal drives it through its
+  own cookie-authenticated internal endpoints, no `SetProperty` name will ever
+  work, which is consistent with 46 names × 16 value forms all failing.
 - Two gaps the probing had left, now closeable:
   - **Name × string value was never tried.** The 46-name sweep used the
     integer `4`; the value sweep used one name. `--value-token` sweeps every

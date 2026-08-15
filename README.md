@@ -279,6 +279,16 @@ python3 scripts/probe_loggamera_properties.py ... --probe-write \
 python3 scripts/probe_loggamera_properties.py ... --probe-write --names-file mina-namn.txt
 ```
 
+> [!NOTE]
+> **Trafikanalys av Android-appen** (PCAPdroid) tyder på att appen till stor
+> del är en **WebView som renderar `portal.loggamera.se`** — 156 KB dit vid
+> uppstart, plus Google Tag Manager, Analytics och WebViews formulärautofyll,
+> medan `platform.loggamera.se` bara fick en 2 KB-anslutning. Om portalen
+> styr fläkten via sina egna sessionsautentiserade endpoints finns fläkten
+> kanske inte i det publika API:t alls, och då kommer inget `PropertyName`
+> att fungera. Fångsten var inte TLS-dekrypterad, så detta är en hypotes —
+> men den är förenlig med att 46 namn × 16 värdeformer alla avvisats.
+
 `--probe-values` är experimentet som avgör saken: den skriver varje token,
 läser tillbaka `Fan state` och bygger den faktiska tabellen token → läge.
 Den ändrar fläktläget på riktigt en kort stund per token och **återställer
