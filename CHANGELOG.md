@@ -50,8 +50,24 @@ API documentation.
 - The positive control (`SetHeatCurve`) was accepted on both the v1 and v2
   endpoints, ruling out a permissions problem. `SetValue`, `ExecuteCommand`
   and `Command` return 404, so v1/v2 SetProperty is the whole write surface.
-- Scheduled mode's token is still unconfirmed (`Auto` is the current guess).
-  `--probe-values` resolves the real vocabulary empirically.
+- **Support's answer did not hold up.** `--probe-values` on the RX95 rejected
+  all 16 value forms for `SetFanState`, including support's exact vocabulary
+  (`Off` / `Low` / `Normal` / `High`) and the integers. Support hedged with
+  "jag tror", so this was a guess rather than a lookup. The property remains
+  unknown; the integration still ships `SetFanState` + strings first since it
+  costs nothing when it fails and the read path is unaffected.
+- Two gaps the probing had left, now closeable:
+  - **Name × string value was never tried.** The 46-name sweep used the
+    integer `4`; the value sweep used one name. `--value-token` sweeps every
+    name with an arbitrary string instead.
+  - **The fan may not be on the heat-pump DeviceId.** `--list-devices`
+    enumerates organisations and devices, since a separate ventilation device
+    would produce exactly the rejections observed.
+
+### Fixed
+- The value probe no longer warns "could not restore" when *nothing* was
+  accepted. In that case the pump was never modified, so there is nothing to
+  restore — the old message was alarming and wrong.
 
 ### Changed
 - `async_set_property` accepts an `attempts` override. Probing uses a single

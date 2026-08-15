@@ -320,8 +320,9 @@ def probe_writes(api_key: str, device_id: int, value: int, names: list[str],
                  negative_signature: str | None, spacing: float,
                  url: str = API_SETPROPERTY) -> None:
     """Try each candidate PropertyName and group the outcomes by signature."""
-    print(f"\n=== Probing {len(names)} SetProperty names with Value={value} "
-          f"({FAN_MODE_NAMES.get(value, '?')}) against {url} ===")
+    label = FAN_MODE_NAMES.get(value) if isinstance(value, int) else "string token"
+    print(f"\n=== Probing {len(names)} SetProperty names with Value={value!r} "
+          f"({label or '?'}) against {url} ===")
     accepted: list[str] = []
     by_signature: dict[str, list[str]] = {}
 
@@ -362,6 +363,73 @@ def probe_writes(api_key: str, device_id: int, value: int, names: list[str],
               "error as the negative control, the fan property simply is not "
               "exposed on this endpoint -- try --probe-endpoints, and see the "
               "notes in the PR about asking Loggamera support directly.")
+
+
+def list_devices(api_key: str) -> None:
+    """Enumerate the devices and organisations this API key can see.
+
+    A hypothesis worth ruling out before any reverse engineering: the fan may
+    simply not live on the heat-pump DeviceId. Loggamera installations can
+    expose several devices per organisation, and if ventilation is modelled as
+    its own device then every SetProperty aimed at the pump would be rejected
+    exactly the way we have been seeing.
+    """
+    print("\n=== Devices and organisations visible to this API key ===")
+    endpoints = [
+        (f"{API_HOST}/Api/v2/Organizations", {"ApiKey": api_key}),
+        (f"{API_HOST}/Api/v2/Devices", {"ApiKey": api_key}),
+        (f"{API_HOST}/Api/v1/Devices", {"ApiKey": api_key}),
+    ]
+    org_ids: list = []
+
+    for url, payload in endpoints:
+        status, body = post(url, payload)
+        if status != 200 or not isinstance(body, dict) or body.get("Error"):
+            detail = ""
+            if isinstance(body, dict) and body.get("Error"):
+                detail = f" -- {body['Error']}"
+            print(f"  no    {url}  (HTTP {status}){detail}")
+            continue
+
+        data = body.get("Data") or {}
+        print(f"  WORKS {url}")
+        for key in ("Organizations", "Devices"):
+            items = data.get(key)
+            if not isinstance(items, list):
+                continue
+            print(f"        {key}: {len(items)}")
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                ident = item.get("Id")
+                label = (item.get("Name") or item.get("Title")
+                         or item.get("DeviceTypeName") or "?")
+                kind = item.get("Class") or item.get("DeviceType") or ""
+                print(f"          Id={ident!r:10} {label!r} {kind}")
+                if key == "Organizations" and ident is not None:
+                    org_ids.append(ident)
+
+    # Devices is usually scoped per organisation, so retry with each id found.
+    for org_id in org_ids:
+        for version in ("v2", "v1"):
+            url = f"{API_HOST}/Api/{version}/Devices"
+            status, body = post(url, {"ApiKey": api_key, "OrganizationId": org_id})
+            if status != 200 or not isinstance(body, dict) or body.get("Error"):
+                continue
+            devices = (body.get("Data") or {}).get("Devices")
+            if not isinstance(devices, list):
+                continue
+            print(f"\n  Devices for OrganizationId={org_id} (via {version}): "
+                  f"{len(devices)}")
+            for device in devices:
+                if isinstance(device, dict):
+                    print(f"    Id={device.get('Id')!r:10} "
+                          f"{device.get('Title') or device.get('Name')!r} "
+                          f"{device.get('Class') or ''}")
+            break
+
+    print("\n  If more than one device is listed, re-run the sweeps against the "
+          "other DeviceId -- the fan may not belong to the heat-pump device.")
 
 
 def probe_values(api_key: str, device_id: int, prop_name: str,
@@ -405,20 +473,28 @@ def probe_values(api_key: str, device_id: int, prop_name: str,
         print(f"  ACCEPTED  {token!r:14} -> Fan state = {mode_after} ({label})")
         accepted.append((token, mode_after))
 
-    # Restore.
-    print(f"\n  Restoring original mode {original} ({FAN_MODE_NAMES[original]})...")
-    restored = False
-    for token, mode_after in accepted:
-        if mode_after == original:
-            ok, _, _ = try_write(api_key, device_id, prop_name, token, url=url)
-            if ok:
-                print(f"  Restored with {token!r}.")
-                restored = True
-            break
-    if not restored:
-        print("  !! Could not restore automatically -- no accepted token mapped "
-              f"back to mode {original}. Set the fan mode manually in the "
-              "Comfortzone app.")
+    # Restore -- but only if something actually changed. When every token was
+    # rejected the pump was never touched, and warning about a failed restore
+    # would be alarming nonsense.
+    if not accepted:
+        print(f"\n  Nothing was accepted, so the pump was never modified -- "
+              f"it is still in mode {original} ({FAN_MODE_NAMES[original]}). "
+              f"No restore needed.")
+    else:
+        print(f"\n  Restoring original mode {original} "
+              f"({FAN_MODE_NAMES[original]})...")
+        restored = False
+        for token, mode_after in accepted:
+            if mode_after == original:
+                ok, _, _ = try_write(api_key, device_id, prop_name, token, url=url)
+                if ok:
+                    print(f"  Restored with {token!r}.")
+                    restored = True
+                break
+        if not restored:
+            print("  !! Could not restore automatically -- no accepted token "
+                  f"mapped back to mode {original}. Set the fan mode manually "
+                  "in the Comfortzone app.")
 
     print("\n--- Value mapping ---")
     if accepted:
@@ -477,6 +553,12 @@ def main() -> None:
         help="Check which API endpoints accept a known-good property",
     )
     parser.add_argument(
+        "--value-token",
+        help="Exact value to use for the --probe-write name sweep, sent as a "
+             "string (e.g. Normal). Overrides --value. Closes the gap left by "
+             "sweeping every name with an integer only.",
+    )
+    parser.add_argument(
         "--value",
         type=int,
         choices=[1, 2, 3, 4],
@@ -487,6 +569,12 @@ def main() -> None:
         "--extra-names",
         default="",
         help="Comma-separated extra property names to add to the sweep",
+    )
+    parser.add_argument(
+        "--list-devices",
+        action="store_true",
+        help="Enumerate devices/organisations this API key can see, in case "
+             "the fan belongs to a different DeviceId",
     )
     parser.add_argument(
         "--probe-values",
@@ -526,6 +614,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.list_devices:
+        list_devices(args.api_key)
+
     values = fetch_values(args.api_key, args.device_id)
     print(f"RawData returned {len(values)} fields.")
     dump_values(values)
@@ -540,11 +631,11 @@ def main() -> None:
         )
 
     if not args.probe_write:
-        if not (args.probe_endpoints or args.probe_values):
+        if not (args.probe_endpoints or args.probe_values or args.list_devices):
             print("\nRe-run with --probe-write to identify the writable property name.")
         return
 
-    value = args.value
+    value = args.value_token if args.value_token else args.value
     if value is None:
         value = current_fan_mode(values)
         if value is None:
@@ -555,6 +646,8 @@ def main() -> None:
             )
         print(f"\nUsing the pump's current mode ({value} = "
               f"{FAN_MODE_NAMES[value]}) so a successful write is a no-op.")
+    elif args.value_token:
+        print(f"\nSweeping names with the string value {value!r}.")
 
     negative_signature = run_controls(
         args.api_key, args.device_id, values, args.spacing, url=args.endpoint
