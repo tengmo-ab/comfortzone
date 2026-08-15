@@ -279,6 +279,28 @@ python3 scripts/probe_loggamera_properties.py ... --probe-write \
 python3 scripts/probe_loggamera_properties.py ... --probe-write --names-file mina-namn.txt
 ```
 
+### Gräv i appen i stället för i trafiken
+
+Appens WebView-URL och eventuella `PropertyName` är **strängkonstanter i
+APK:n** — de går att läsa utan root, utan att patcha appen och utan att
+dekryptera någon trafik. Hämta APK:n från telefonen och kör:
+
+```bash
+adb shell pm path se.loggamera.comfortzoneonline2   # listar alla split-APK:er
+adb pull /data/app/.../base.apk
+
+python3 scripts/extract_app_strings.py base.apk split_config.*.apk
+```
+
+Skriptet listar URL:er, portal-routes, API-fragment och kandidater till
+`PropertyName`, med ramverksbrus bortfiltrerat. Dyker det upp en portal-URL
+som *inte* är `/Start/Index/<id>` är det den route appens WebView öppnar —
+och där fläktkontrollen finns. Dyker det upp ett `SetXxx`-namn vi inte svept,
+mata in det direkt med `--extra-names`.
+
+Hittas inget fläktrelaterat `SetXxx` alls är det stark indikation på att
+appen inte skriver fläkten via det publika API:t.
+
 > [!NOTE]
 > **Trafikanalys av Android-appen** (PCAPdroid) tyder på att appen till stor
 > del är en **WebView som renderar `portal.loggamera.se`** — 156 KB dit vid
