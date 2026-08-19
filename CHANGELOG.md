@@ -39,43 +39,51 @@ API documentation.
   `Fan speed slow reduction` (−20 %) and `Fan speed boost increase` (+10 %).
   The effective level is `normal + the offset for the active mode`.
 - **Mode 4 = scheduled confirmed**, observed as the pump's active mode.
-- **Writing: Loggamera support says the property is `SetFanState`, taking
-  *string* values (`Off` / `Low` / `Normal` / `High`)** rather than the
-  integers 1–4 the pump reports back. The earlier 46-name sweep *did* try
-  `SetFanState` — with the integer `4` — and was rejected, so the sweep's
-  "none of these names exists" conclusion was wrong: the API answers a bad
-  **value** with the same opaque `"unsupported set parameter"` it gives a bad
-  **name**, which the negative control could not distinguish. The name and
-  the value vocabulary are now resolved together.
+- **Writing was chased down three dead ends**, recorded here so nobody repeats
+  them:
+  - A 46-name `SetProperty` sweep, all rejected. The conclusion "none of these
+    names exists" was itself wrong at the time — the API answers a bad *value*
+    with the same opaque `"unsupported set parameter"` it gives a bad *name*,
+    so a negative control on names cannot rule a name out.
+  - Support's first answer (`SetFanState` with `Off`/`Low`/`Normal`/`High`)
+    tested against the pump: all 16 value forms rejected, including their exact
+    vocabulary. It was hedged with "jag tror" — a guess, not a lookup.
+  - Traffic analysis of the Android app (PCAPdroid, non-rooted S24): 156 KB to
+    `portal.loggamera.se` across six connections plus 168 KB of Google Tag
+    Manager, Google Analytics and `content-autofill.googleapis.com` — Android
+    WebView's form autofill. `platform.loggamera.se` saw one 2 KB connection,
+    and its ClientHello advertises `http/1.1` only while the portal negotiates
+    `h2`: two HTTP stacks in one app, most of it a WebView.
 - The positive control (`SetHeatCurve`) was accepted on both the v1 and v2
   endpoints, ruling out a permissions problem. `SetValue`, `ExecuteCommand`
   and `Command` return 404, so v1/v2 SetProperty is the whole write surface.
-- **Support's answer did not hold up.** `--probe-values` on the RX95 rejected
-  all 16 value forms for `SetFanState`, including support's exact vocabulary
-  (`Off` / `Low` / `Normal` / `High`) and the integers. Support hedged with
-  "jag tror", so this was a guess rather than a lookup. The property remains
-  unknown; the integration still ships `SetFanState` + strings first since it
-  costs nothing when it fails and the read path is unaffected.
-- **Traffic analysis of the Android app (PCAPdroid, non-rooted S24) suggests
-  the fan may not be in the public API at all.** During app startup the app
-  sent 156 KB across six connections to `portal.loggamera.se` and pulled
-  168 KB from `www.googletagmanager.com`, alongside `region1.google-analytics`
-  and `content-autofill.googleapis.com` — the last being Android WebView's
-  form autofill. That combination means a WebView rendering the portal, not a
-  native REST client. `platform.loggamera.se` saw a single 2 KB connection,
-  and its TLS ClientHello advertises only `http/1.1` while the portal's
-  negotiates `h2`: two different HTTP stacks in one app. Changing the fan mode
-  contacted both hosts, so which one carries the write is not yet established
-  — the capture was not TLS-decrypted. But if the portal drives it through its
-  own cookie-authenticated internal endpoints, no `SetProperty` name will ever
-  work, which is consistent with 46 names × 16 value forms all failing.
-- Two gaps the probing had left, now closeable:
-  - **Name × string value was never tried.** The 46-name sweep used the
-    integer `4`; the value sweep used one name. `--value-token` sweeps every
-    name with an arbitrary string instead.
-  - **The fan may not be on the heat-pump DeviceId.** `--list-devices`
-    enumerates organisations and devices, since a separate ventilation device
-    would produce exactly the rejections observed.
+- Probe tooling gained `--value-token` (sweep names with a string rather than
+  an integer), `--list-devices` (in case the fan sat on another DeviceId) and
+  `--probe-values`; `scripts/extract_app_strings.py` reads URLs and property
+  name constants straight out of an APK. None of it found a writable fan,
+  which is itself the answer.
+
+### Resolved — the fan is not in the public API
+Loggamera support, after an initial guess that did not hold up: *"Det går att
+styra i appen, men funktionen finns inte tillgänglig i API:t."* That settles
+it. The app drives the fan through the portal's own interface, which matches
+both the 46 names × 16 value forms all failing and the traffic analysis
+showing the app is largely a WebView against `portal.loggamera.se`.
+
+- **New `sensor.comfortzone_fan_mode`** (read-only, translated enum) reporting
+  låg / normal / boost / schemalagd from `Fan state`. This is the part that
+  works, so it ships unconditionally.
+- **`select.comfortzone_fan_speed` is now only created when
+  `fan_speed_property` is explicitly configured.** A dropdown whose every
+  write fails is worse than no dropdown. The entity and its combination
+  probing are kept intact, so if Loggamera exposes the fan later, filling in
+  the property name is the only change needed.
+- README documents the local RS485 route instead: the EX50 control board
+  exposes a spare RS485 port on RJ11 (19200 8N1, pinout included), and
+  ComfortZone support describes a register protocol with Modbus-style
+  addressing (`TE3 = Modbus(215) × 0.1`). Flagged honestly that
+  qix67/comfortzone_heatpump targets the EX50 and speaks ComfortZone's own
+  framing rather than Modbus, so RX95 compatibility is unverified.
 
 ### Fixed
 - The value probe no longer warns "could not restore" when *nothing* was

@@ -238,93 +238,70 @@ automatiskt. Schemat som läge 4 följer är samma som diagnostiksensorerna
 ### Vilket property-namn används?
 
 > [!IMPORTANT]
-> **Skrivnamnet enligt Loggamera support: `SetFanState`, med *sträng*värden
-> (`Off` / `Low` / `Normal` / `High`) — inte heltalen 1–4 som pumpen
-> rapporterar tillbaka.** Integrationen provar därför strängen först och
-> heltalet som fallback. Värdet för schemalagt läge är ännu inte bekräftat.
+> **Fläkten går inte att styra via Loggameras publika API.** Loggamera
+> support, efter en första felaktig gissning: *"Det går att styra i appen,
+> men funktionen finns inte tillgänglig i API:t."* Appen styr fläkten via
+> portalens eget gränssnitt, inte via `SetProperty`. Det stämmer med att
+> 46 propertynamn × 16 värdeformer alla avvisats, och med trafikanalysen
+> som visar att appen till stor del är en WebView mot `portal.loggamera.se`.
 
-Loggamera publicerar ingen lista över skrivbara properties. Ett svep över 46
-namn gav först ingenting — men den slutsatsen var för stark: API:t svarar
-`"unsupported set parameter"` **både** när namnet är okänt och när värdet är
-fel, så `SetFanState` avvisades bara för att vi skickade heltalet `4`.
+**Läsning fungerar och är bekräftad.** `sensor.comfortzone_fan_mode` visar
+aktuellt läge (låg / normal / boost / schemalagd), läst ur `Fan state`
+(register 2069). Pumpens fyra övriga fläktfält är procentvärden och inget av
+dem är läget:
 
-Det är därför integrationen provar kombinationer av namn **och** värdeform,
-och kommer ihåg vilken kombination som fungerade. Misslyckas hela svepet
-provas det inte igen under sessionen. Läsningen av läget påverkas inte.
+| Fält | Exempel | Betydelse |
+| :-- | --: | :-- |
+| `Fan speed (current)` | 68 % | Momentan varvtalsnivå |
+| `Fan speed normal` | 85 % | Nivå i normalläge |
+| `Fan speed slow reduction` | −20 % | Avdrag i lågläge |
+| `Fan speed boost increase` | +10 % | Påslag i boostläge |
 
-Kör probe-skriptet på HA-värden:Kör probe-skriptet på HA-värden:
+Effektiv nivå är `normal + avdrag/påslag för aktivt läge`.
 
-```bash
-# Dumpa allt pumpen rapporterar, med fläktrelaterade fält först
-python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345
+`select.comfortzone_fan_speed` skapas **bara** om du fyllt i
+**Fan speed property name** i alternativen. En dropdown vars varje skrivning
+misslyckas är sämre än ingen dropdown alls — men skulle Loggamera exponera
+fläkten i API:t senare räcker det att fylla i namnet, ingen kodändring behövs.
 
-# Kontroller + svep över ~45 kandidatnamn, grupperat efter felsignatur
-python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345 --probe-write
+### Vill du faktiskt styra fläkten: lokal RS485
 
-# Lägg till egna gissningar
-python3 scripts/probe_loggamera_properties.py ... --probe-write --extra-names SetFan,setFanSpeed
+ComfortZones tekniska support beskriver den lokala vägen: pumpen pratar ett
+dataprotokoll över serieport, inte JSON. Styrkortet har **två RS485-portar på
+RJ11 6P6C** — den ena går till manöverpanelen, **den andra är ledig**
+(19200 baud, 8N1). Pinout enligt
+[qix67/comfortzone_heatpump](https://github.com/qix67/comfortzone_heatpump):
 
-# Ta reda på vilka VÄRDEN pumpen accepterar, och vad varje värde ger för läge.
-# Skriver varje token, läser tillbaka "Fan state", och återställer ditt
-# ursprungsläge när den är klar.
-python3 scripts/probe_loggamera_properties.py --api-key DIN_NYCKEL --device-id 12345 \
-    --probe-values
+| Pin | Signal |
+| :-: | :-- |
+| 1, 5 | 24 V |
+| 2, 6 | GND |
+| 3 | RS485 B |
+| 4 | RS485 A |
 
-# Kolla om andra endpoints/API-versioner accepterar fler properties
-python3 scripts/probe_loggamera_properties.py ... --probe-endpoints
+> [!WARNING]
+> Kastar du om A och B visar manöverpanelen "connection lost". Bibliotekets
+> författare gjorde det i ~2 minuter utan bestående skada, men koppla rätt.
 
-# Svep mot v2-endpointen i stället, eller mot en egen namnlista
-python3 scripts/probe_loggamera_properties.py ... --probe-write \
-    --endpoint https://platform.loggamera.se/Api/v2/SetProperty
-python3 scripts/probe_loggamera_properties.py ... --probe-write --names-file mina-namn.txt
-```
+Det biblioteket implementerar `set_fan_speed(1|2|3|4)` över bussen — alltså
+exakt det vi inte kommer åt via molnet. Två förbehåll: det är utvecklat mot
+**EX50**, inte RX95, och det talar ComfortZones **egna ramformat**, inte
+Modbus. ComfortZone support nämner Modbus med registerexempel
+(`TE3 = Modbus(215) × 0.1`), vilket antyder att nyare modeller kan exponera
+Modbus RTU. Stämmer det klarar Home Assistants **inbyggda Modbus-integration**
+både läsning och skrivning utan någon egen kod.
 
-### Gräv i appen i stället för i trafiken
+**Fråga ComfortZone support om registerkartan** — de har redan visat sig
+villiga att förklara protokollet:
 
-Appens WebView-URL och eventuella `PropertyName` är **strängkonstanter i
-APK:n** — de går att läsa utan root, utan att patcha appen och utan att
-dekryptera någon trafik. Hämta APK:n från telefonen och kör:
+> Jag vill styra fläktläget lokalt från Home Assistant över RS485 på RX95.
+> Kan ni skicka registerkartan? Jag behöver särskilt: (1) registret för
+> fläktläge och om det är skrivbart, (2) giltiga värden, (3) bussparametrar
+> (baud, paritet, slave-id), (4) om RX95 talar Modbus RTU eller ert eget
+> ramformat.
 
-```bash
-adb shell pm path se.loggamera.comfortzoneonline2   # listar alla split-APK:er
-adb pull /data/app/.../base.apk
-
-python3 scripts/extract_app_strings.py base.apk split_config.*.apk
-```
-
-Skriptet listar URL:er, portal-routes, API-fragment och kandidater till
-`PropertyName`, med ramverksbrus bortfiltrerat. Dyker det upp en portal-URL
-som *inte* är `/Start/Index/<id>` är det den route appens WebView öppnar —
-och där fläktkontrollen finns. Dyker det upp ett `SetXxx`-namn vi inte svept,
-mata in det direkt med `--extra-names`.
-
-Hittas inget fläktrelaterat `SetXxx` alls är det stark indikation på att
-appen inte skriver fläkten via det publika API:t.
-
-> [!NOTE]
-> **Trafikanalys av Android-appen** (PCAPdroid) tyder på att appen till stor
-> del är en **WebView som renderar `portal.loggamera.se`** — 156 KB dit vid
-> uppstart, plus Google Tag Manager, Analytics och WebViews formulärautofyll,
-> medan `platform.loggamera.se` bara fick en 2 KB-anslutning. Om portalen
-> styr fläkten via sina egna sessionsautentiserade endpoints finns fläkten
-> kanske inte i det publika API:t alls, och då kommer inget `PropertyName`
-> att fungera. Fångsten var inte TLS-dekrypterad, så detta är en hypotes —
-> men den är förenlig med att 46 namn × 16 värdeformer alla avvisats.
-
-`--probe-values` är experimentet som avgör saken: den skriver varje token,
-läser tillbaka `Fan state` och bygger den faktiska tabellen token → läge.
-Den ändrar fläktläget på riktigt en kort stund per token och **återställer
-ditt ursprungsläge** när den är klar.
-
-`Off` finns med i probens tokenlista men **inte** i integrationen. På en
-frånluftsvärmepump är fläkten värmekällan, så att stanna den är ett beslut
-man tar medvetet — inte något man ska kunna råka göra från en dropdown.
-
-Skriptet skriver som standard tillbaka det läge pumpen redan står i, så en
-lyckad probe ändrar ingenting. Hittar du ett namn utanför kandidatlistan,
-fyll i det under **Fan speed property name** i integrationens alternativ —
-och gärna öppna ett issue så det kan bli default.
-
+Med den kartan är resten enkel: USB-RS485-adapter på HA-värden, eller
+ESP32 + MAX485 med ESPHome.
 
 ---
 

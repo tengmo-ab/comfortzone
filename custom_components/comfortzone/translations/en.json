@@ -80,6 +80,17 @@
                     "schedule": "Scheduled (automatic)"
                 }
             }
+        },
+        "sensor": {
+            "fan_mode": {
+                "name": "Fan mode",
+                "state": {
+                    "low": "Low",
+                    "normal": "Normal",
+                    "boost": "Boost",
+                    "schedule": "Scheduled (automatic)"
+                }
+            }
         }
     }
 }

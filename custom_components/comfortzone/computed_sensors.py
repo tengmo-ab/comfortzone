@@ -62,6 +62,9 @@ from .const import (
     CONF_PRICE_IN_ORE,
     DEFAULT_COMPRESSOR_FACTOR,
     DEFAULT_LONG_HW_CYCLE_MIN,
+    FAN_MODE_OPTIONS,
+    FAN_MODE_READ_CANDIDATES,
+    FAN_MODE_VALUE_TO_OPTION,
     MIN_ELECTRICAL_FOR_COP_W,
     STANDBY_W,
 )
@@ -1345,6 +1348,66 @@ class SpecificHeatingEnergySensor(_ComfortzoneComputedBase, RestoreSensor):
             self._anchor_kwh = self._kwh_total
 
 
+# --- Fan mode --------------------------------------------------------------
+
+
+class FanModeSensor(_ComfortzoneComputedBase):
+    """The pump's configured fan mode, as a translated enum.
+
+    Read-only by design. Loggamera support confirmed the fan "går att styra i
+    appen, men funktionen finns inte tillgänglig i API:t" — the app drives it
+    through the portal's own interface, not the public ApiKey API. So there is
+    no property to write, and a select entity that can never succeed would be
+    a worse experience than an honest readout. Local RS485 control is the
+    route to actually changing it; see the README.
+    """
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_translation_key = "fan_mode"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(
+            coordinator,
+            entry,
+            suffix="fan_mode",
+            name="Fan mode",
+            icon="mdi:fan",
+        )
+        self._attr_options = list(FAN_MODE_OPTIONS)
+        self._attr_native_value: Optional[str] = None
+        self._read_field: Optional[str] = None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose which RawData field the mode was read from."""
+        return {"read_field": self._read_field}
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        values = _coordinator_values(self.coordinator)
+        mode: Optional[int] = None
+        self._read_field = None
+        if values is not None:
+            for clear_text_name in FAN_MODE_READ_CANDIDATES:
+                raw = find_value_from_raw_data(values, clear_text_name)
+                if raw is None:
+                    continue
+                try:
+                    candidate = int(float(raw))
+                except (TypeError, ValueError):
+                    continue
+                # The 1-4 range check is what keeps the percentage fields
+                # ("Fan speed (current)" and friends) from being read as a mode.
+                if candidate in FAN_MODE_VALUE_TO_OPTION:
+                    mode = candidate
+                    self._read_field = clear_text_name
+                    break
+
+        self._attr_available = mode is not None
+        self._attr_native_value = FAN_MODE_VALUE_TO_OPTION.get(mode) if mode else None
+        self.async_write_ha_state()
+
+
 # --- Reduced fan diagnostics ----------------------------------------------
 
 
@@ -1446,6 +1509,8 @@ def build_computed_sensors(
         DhwProductionRateSensor(coordinator, entry),
         CompressorLoadPercentageSensor(coordinator, entry),
         SpecificHeatingEnergySensor(coordinator, entry),
+        # Fan
+        FanModeSensor(coordinator, entry),
         # Diagnostics: night fan schedule
         ReducedFanScheduleSensor(coordinator, entry, "weekdays"),
         ReducedFanScheduleSensor(coordinator, entry, "weekends"),

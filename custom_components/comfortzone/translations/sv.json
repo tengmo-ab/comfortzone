@@ -80,6 +80,17 @@
                     "schedule": "Schemalagd (automatik)"
                 }
             }
+        },
+        "sensor": {
+            "fan_mode": {
+                "name": "Fläktläge",
+                "state": {
+                    "low": "Låg",
+                    "normal": "Normal",
+                    "boost": "Boost",
+                    "schedule": "Schemalagd (automatik)"
+                }
+            }
         }
     }
 }

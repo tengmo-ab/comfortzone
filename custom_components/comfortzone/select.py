@@ -56,6 +56,23 @@ async def async_setup_entry(
         _LOGGER.error("Coordinator or API client missing for %s", entry.entry_id)
         return
 
+    # Loggamera support confirmed the fan is controllable in the app but "finns
+    # inte tillgänglig i API:t" — it goes through the portal's own interface,
+    # not the public ApiKey API. A select whose every write fails is worse than
+    # no select, so this entity only appears when the user has explicitly
+    # configured a property name (they know something the API does not tell us,
+    # or Loggamera has since exposed it). The read-only sensor.comfortzone_fan_mode
+    # always exists and reports the current mode.
+    if not entry.options.get(CONF_FAN_SPEED_PROPERTY):
+        _LOGGER.debug(
+            "No '%s' configured; skipping the fan speed select. The fan is not "
+            "writable through the public Loggamera API — see the README for "
+            "local RS485 control. sensor.comfortzone_fan_mode still reports the "
+            "current mode",
+            CONF_FAN_SPEED_PROPERTY,
+        )
+        return
+
     async_add_entities([ComfortzoneFanSpeedSelect(coordinator, api_client, entry)])
 
 
