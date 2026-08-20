@@ -25,6 +25,10 @@ CONF_LOW_HW_HYSTERESIS_C = "low_hw_hysteresis_c"
 CONF_MAX_LOAD_THRESHOLD_PCT = "max_load_threshold_pct"
 CONF_MAX_LOAD_DURATION_S = "max_load_duration_s"
 
+# Optional override for the SetProperty name used to write the fan speed.
+# Empty means "auto-detect" (see FAN_SPEED_PROPERTY_CANDIDATES below).
+CONF_FAN_SPEED_PROPERTY = "fan_speed_property"
+
 # Large-hot-water-draw detection (the sensor formerly called "shower in
 # progress"). The threshold is expressed in °C of accumulated "missing heat":
 # how far the tank temperature falls short of where the pump's current mode
@@ -177,6 +181,94 @@ CLEAR_TEXT_NAMES = {
     "REDUCED_FAN_WEEKENDS_STOP_H": "Reduced fan Weekends stop hour",
     "REDUCED_FAN_WEEKENDS_STOP_M": "Reduced fan Weekends stop minute",
 }
+
+# --- Fan speed / ventilation mode -----------------------------------------
+#
+# The Comfortzone controller stores the fan setting as a single small integer
+# in the register the RS485 protocol calls "Fan speed". The value set is
+# documented in the reverse-engineered protocol library
+# (github.com/qix67/comfortzone_heatpump, comfortzone_heatpump.cpp):
+#
+#     1 = low, 2 = normal, 3 = fast, 4 = on timer (HP protocol 1.8+)
+#
+# Value 4 is the "automatic" mode the Android app exposes: the fan follows
+# the reduced-fan day/night schedule instead of a fixed speed. Pumps running
+# the older 1.6 protocol reject 4 and only accept 1-3, so a write of 4 that
+# comes back rejected means "this pump is too old for scheduled mode".
+FAN_MODE_LOW = 1
+FAN_MODE_NORMAL = 2
+FAN_MODE_BOOST = 3
+FAN_MODE_SCHEDULE = 4
+
+# Option strings used by the select entity (translated via strings.json).
+FAN_MODE_OPTIONS: dict[str, int] = {
+    "low": FAN_MODE_LOW,
+    "normal": FAN_MODE_NORMAL,
+    "boost": FAN_MODE_BOOST,
+    "schedule": FAN_MODE_SCHEDULE,
+}
+FAN_MODE_VALUE_TO_OPTION: dict[int, str] = {
+    value: option for option, value in FAN_MODE_OPTIONS.items()
+}
+
+# Loggamera support states the fan is written with **SetFanState**, taking
+# *string* values (Off / Low / Normal / High) rather than the numeric 1-4 the
+# pump reports back. That distinction matters: an earlier 46-name sweep tried
+# SetFanState with the integer 4 and was rejected, but the API answers a bad
+# *value* with the same opaque "unsupported set parameter" it gives a bad
+# *name* — so the rejection never meant the name was wrong.
+#
+# SetFanState therefore leads the list, and each option carries several value
+# forms tried in order (see FAN_MODE_WRITE_VALUES). Users whose pump answers
+# to something else can pin the name with the `fan_speed_property` option.
+FAN_SPEED_PROPERTY_CANDIDATES: tuple[str, ...] = (
+    "SetFanState",
+    "SetFanSpeed",
+    "SetFanMode",
+)
+
+# Value forms per option, tried in order until the API accepts one.
+#
+# ORDERING IS LOAD-BEARING: every option must list its forms in the same
+# order (string token first, numeric second), because the client caches the
+# *index* of the winning form and reuses it for the other options.
+#
+# "Off" is deliberately absent. Support lists it as a valid value, but this is
+# an exhaust-air heat pump — the fan is its heat source, so stopping it is a
+# decision to make explicitly, not something to stumble into while probing.
+# Scheduled mode's token is still unconfirmed; the candidates below are
+# guesses, and scripts/probe_loggamera_properties.py --probe-values resolves
+# the real vocabulary by writing each token and reading the mode back.
+FAN_MODE_WRITE_VALUES: dict[str, tuple] = {
+    "low": ("Low", FAN_MODE_LOW),
+    "normal": ("Normal", FAN_MODE_NORMAL),
+    "boost": ("High", FAN_MODE_BOOST),
+    "schedule": ("Auto", FAN_MODE_SCHEDULE),
+}
+
+# ClearTextNames that may carry the *configured* fan mode (1-4). Read in
+# order; the first entry that parses to an integer within 1-4 wins.
+#
+# Confirmed against an RX95: the mode is reported as "Fan state" (register
+# 2069), which is why it leads this list. The pump also reports four *other*
+# fan fields, all percentages, none of which is the mode:
+#
+#   Fan speed (current)      85 %   momentary duty cycle
+#   Fan speed normal         85 %   duty cycle used in normal mode
+#   Fan speed slow reduction -20 %  offset applied in low mode
+#   Fan speed boost increase +10 %  offset applied in boost mode
+#
+# So the effective duty cycle is "normal + the offset for the active mode".
+# The remaining entries are kept as fallbacks for firmwares that name the
+# register differently; the 1-4 range check is what stops a percentage from
+# being mistaken for a mode.
+FAN_MODE_READ_CANDIDATES: tuple[str, ...] = (
+    "Fan state",
+    "Fan speed",
+    "Fan speed setting",
+    "Fan mode",
+    "Ventilation mode",
+)
 
 # Maps binary_sensor suffix -> ClearTextName
 BINARY_SENSOR_MAP = {

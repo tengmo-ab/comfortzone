@@ -3,6 +3,115 @@
 All notable changes to the Comfortzone Heat Pump integration are documented here.
 This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.12.0] – 2026-08-13
+
+### Added — fan speed (låg / normal / boost / schemalagd)
+The Comfortzone Android app can change the fan speed, so the capability
+exists on the Loggamera side even though it appears in none of the public
+API documentation.
+
+- **New `select.comfortzone_fan_speed`** with four modes — **Låg**,
+  **Normal**, **Boost** and **Schemalagd (automatik)** — matching the app.
+  Scheduled mode makes the fan follow the reduced-fan day/night schedule
+  already surfaced by the `reduced_fan_*_schedule` diagnostic sensors,
+  rather than holding a fixed speed.
+- **Value mapping** taken from the reverse-engineered control protocol
+  ([qix67/comfortzone_heatpump](https://github.com/qix67/comfortzone_heatpump)):
+  `1 = low, 2 = normal, 3 = fast, 4 = on timer`. Mode 4 requires control
+  protocol 1.8 or later.
+- **New `fan_speed_property` option** to pin the exact `SetProperty` name.
+- **New `scripts/probe_loggamera_properties.py`** — a dependency-free script
+  that dumps every field a pump reports and hunts for the writable property
+  name. It runs a **positive control** (a known-good property written with
+  the pump's current value, so it is a no-op) and a **negative control** (a
+  deliberately absurd name), then groups every candidate by error signature.
+  The API returns the same opaque `"unsupported set parameter"` for both a
+  bad name and a bad value, so a candidate whose error *differs* from the
+  negative control is the real lead. `--extra-names` adds guesses,
+  `--probe-endpoints` tests other API versions, `--spacing` paces the writes.
+- **Diagnostics** report the resolved read field and write property.
+
+### Status against real hardware (RX95)
+- **Reading works.** The mode is reported as **`Fan state` (register 2069)**,
+  not `Fan speed`, so that leads the read candidate list. The pump's four
+  other fan fields are all percentages and none is the mode:
+  `Fan speed (current)` (momentary duty cycle), `Fan speed normal` (85 %),
+  `Fan speed slow reduction` (−20 %) and `Fan speed boost increase` (+10 %).
+  The effective level is `normal + the offset for the active mode`.
+- **Mode 4 = scheduled confirmed**, observed as the pump's active mode.
+- **Writing was chased down three dead ends**, recorded here so nobody repeats
+  them:
+  - A 46-name `SetProperty` sweep, all rejected. The conclusion "none of these
+    names exists" was itself wrong at the time — the API answers a bad *value*
+    with the same opaque `"unsupported set parameter"` it gives a bad *name*,
+    so a negative control on names cannot rule a name out.
+  - Support's first answer (`SetFanState` with `Off`/`Low`/`Normal`/`High`)
+    tested against the pump: all 16 value forms rejected, including their exact
+    vocabulary. It was hedged with "jag tror" — a guess, not a lookup.
+  - Traffic analysis of the Android app (PCAPdroid, non-rooted S24): 156 KB to
+    `portal.loggamera.se` across six connections plus 168 KB of Google Tag
+    Manager, Google Analytics and `content-autofill.googleapis.com` — Android
+    WebView's form autofill. `platform.loggamera.se` saw one 2 KB connection,
+    and its ClientHello advertises `http/1.1` only while the portal negotiates
+    `h2`: two HTTP stacks in one app, most of it a WebView.
+- The positive control (`SetHeatCurve`) was accepted on both the v1 and v2
+  endpoints, ruling out a permissions problem. `SetValue`, `ExecuteCommand`
+  and `Command` return 404, so v1/v2 SetProperty is the whole write surface.
+- Probe tooling gained `--value-token` (sweep names with a string rather than
+  an integer), `--list-devices` (in case the fan sat on another DeviceId) and
+  `--probe-values`; `scripts/extract_app_strings.py` reads URLs and property
+  name constants straight out of an APK. None of it found a writable fan,
+  which is itself the answer.
+
+### Resolved — the fan is not in the public API
+Loggamera support, after an initial guess that did not hold up: *"Det går att
+styra i appen, men funktionen finns inte tillgänglig i API:t."* That settles
+it. The app drives the fan through the portal's own interface, which matches
+both the 46 names × 16 value forms all failing and the traffic analysis
+showing the app is largely a WebView against `portal.loggamera.se`.
+
+- **New `sensor.comfortzone_fan_mode`** (read-only, translated enum) reporting
+  låg / normal / boost / schemalagd from `Fan state`. This is the part that
+  works, so it ships unconditionally.
+- **`select.comfortzone_fan_speed` is now only created when
+  `fan_speed_property` is explicitly configured.** A dropdown whose every
+  write fails is worse than no dropdown. The entity and its combination
+  probing are kept intact, so if Loggamera exposes the fan later, filling in
+  the property name is the only change needed.
+- README documents the local RS485 route instead: the EX50 control board
+  exposes a spare RS485 port on RJ11 (19200 8N1, pinout included), and
+  ComfortZone support describes a register protocol with Modbus-style
+  addressing (`TE3 = Modbus(215) × 0.1`). Flagged honestly that
+  qix67/comfortzone_heatpump targets the EX50 and speaks ComfortZone's own
+  framing rather than Modbus, so RX95 compatibility is unverified.
+
+### Fixed
+- The value probe no longer warns "could not restore" when *nothing* was
+  accepted. In that case the pump was never modified, so there is nothing to
+  restore — the old message was alarming and wrong.
+
+### Changed
+- `async_set_property` accepts an `attempts` override. Probing uses a single
+  attempt so a rejected name fails fast instead of waiting out the 60-second
+  retry; ordinary writes keep the existing retry behaviour.
+- A candidate sweep that finds nothing is **not repeated** for the rest of
+  the session. Probing costs one API write per name, so retrying it on every
+  click wasted writes; the log points at the probe script instead.
+- A rejected write is not misread as "pre-1.8 pump". That inference is only
+  drawn when the property name is already known to work — otherwise the
+  failure says nothing about the pump's protocol generation.
+- Writes now resolve a `(PropertyName, value form)` **pair**, not just a name:
+  `async_set_first_supported_combination` tries each name against each value
+  form and caches both. The value form's index is shared across modes, so only
+  the first write pays for discovery.
+- Probe script gained `--probe-values`: writes each candidate token to one
+  property, reads `Fan state` back to learn what mode it produced, and
+  restores the pump's original mode afterwards. This is the experiment that
+  produces the real token → mode table. `Off` is included there but
+  deliberately excluded from the integration — on an exhaust-air pump the fan
+  is the heat source, so stopping it should be a deliberate act, not a
+  dropdown entry.
+
 ## [2.11.0] – 2026-06-05
 
 ### Changed — hot-water draw detection rebuilt and renamed

@@ -48,7 +48,8 @@
                     "max_load_threshold_pct": "Kompressor full last — belastningströskel (%)",
                     "max_load_duration_s": "Kompressor full last — varaktighet (sekunder)",
                     "large_draw_threshold_c": "Stort varmvattenuttag — känslighet (°C saknad värme)",
-                    "long_hw_cycle_min": "Lång VV-cykel-golv (minuter)"
+                    "long_hw_cycle_min": "Lång VV-cykel-golv (minuter)",
+                    "fan_speed_property": "Egenskapsnamn för fläkthastighet (tomt = identifiera automatiskt)"
                 },
                 "data_description": {
                     "price_entity": "Välj sensor som rapporterar aktuellt elpris. Krävs för att kostnadssensorerna ska uppdateras.",
@@ -64,6 +65,30 @@
                     "max_load_duration_s": "Standard 300s (5 min). Signalen aktiveras först när lasten varit oavbrutet över tröskeln så här länge.",
                     "large_draw_threshold_c": "Standard 3°C. Hur mycket tanken måste understiga sin förväntade temperatur (integrerat över tid) innan sensorn 'Stort varmvattenuttag' slår till. Lägre = känsligare (fångar mindre uttag men fler falsklarm), högre = bara stora uttag som duschar och bad.",
                     "long_hw_cycle_min": "Standard 50 min. En avslutad varmvattencykel längre än så flaggas 'ovanligt lång' på cykellängd-sensorn, vilket antyder att någon tappade varmvatten medan pumpen redan producerade."
+                }
+            }
+        }
+    },
+    "entity": {
+        "select": {
+            "fan_speed": {
+                "name": "Fläkthastighet",
+                "state": {
+                    "low": "Låg",
+                    "normal": "Normal",
+                    "boost": "Boost",
+                    "schedule": "Schemalagd (automatik)"
+                }
+            }
+        },
+        "sensor": {
+            "fan_mode": {
+                "name": "Fläktläge",
+                "state": {
+                    "low": "Låg",
+                    "normal": "Normal",
+                    "boost": "Boost",
+                    "schedule": "Schemalagd (automatik)"
                 }
             }
         }

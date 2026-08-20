@@ -27,6 +27,7 @@
 | 📊 **24+ sensorer** | Inomhus, ute, frånluft, kompressor­effekt, frekvens, fläkthastighet, tillsats m.m. |
 | 🚨 **Larm & status** | Filterlarm, huvudlarm, kompressor­status, ventil­läge — allt som binär­sensorer. |
 | 🎚️ **Värmekurva** | Justera värmekurva och semester­dagar direkt från dashboarden. |
+| 🌀 **Fläkthastighet** | Låg, normal, boost och schemalagd automatik — samma fyra lägen som Android-appen. |
 | 🛡️ **Smart kö** | Inbyggd kö och retry hanterar långsam Loggamera-API utan att krascha integrationen. |
 | 🇸🇪 **Svensk översättning** | Hela konfigurations­flödet på svenska. |
 | 🩺 **Diagnostik** | Inbyggd "Download Diagnostics" med dold API-nyckel — perfekt för bug-rapporter. |
@@ -103,6 +104,7 @@ flowchart LR
 | `number.comfortzone_hot_water_temp_setpoint` | Number | Börvärde varmvatten (30–60°C) |
 | `number.comfortzone_heat_curve` | Number | Värmekurva (0,0–6,0) |
 | `number.comfortzone_holiday_reduction_days` | Number | Semesterdagar (0–9) |
+| `select.comfortzone_fan_speed` | Select | Fläkthastighet: låg / normal / boost / schemalagd |
 | `switch.comfortzone_hot_water_extra` | Switch | Extra varmvatten |
 | `button.comfortzone_acknowledge_alarm` | Button | Kvittera huvudlarm |
 | `button.comfortzone_reset_filter_alarm` | Button | Återställ filterlarm |
@@ -196,6 +198,110 @@ flowchart LR
 | **Filter warning days** | Standard `7` dagar kvar för förvarningen. |
 | **Low HW threshold + hysteresis** | Standard `40` °C tröskel + `3` °C hysteres → larm aktiveras < 40 °C, släpper > 43 °C. |
 | **Compressor running-at-max threshold + duration** | Standard `90` % i `300` s → trippar när inverter-frekvensen varit ≥ 90 % av max sammanhängande i ≥ 5 minuter. |
+| **Fan speed property name** | Lämna **tomt** (default) så provar integrationen en lista med troliga `SetProperty`-namn vid första skrivningen och kommer ihåg det som fungerar. Fyll bara i om din pump svarar på något annat namn — se avsnittet nedan. |
+
+---
+
+## 🌀 Fläkthastighet
+
+Android-appen kan byta fläktläge, men fläkten nämns inte i någon publik
+beskrivning av Loggamera-API:t. Lägena och värdena här är hämtade från den
+reverse-engineerade styrprotokoll-implementationen
+[qix67/comfortzone_heatpump](https://github.com/qix67/comfortzone_heatpump),
+där registret heter `Fan speed`:
+
+| Läge | Värde | Beskrivning |
+| :-- | :--: | :-- |
+| Låg | `1` | Fast låg hastighet |
+| Normal | `2` | Fast normalhastighet |
+| Boost | `3` | Fast förhöjd hastighet |
+| Schemalagd (automatik) | `4` | Fläkten följer dygnsschemat i stället för en fast hastighet |
+
+Läget rapporteras tillbaka i fältet **`Fan state`** (register `2069`) —
+bekräftat på en RX95. Pumpen rapporterar fyra *andra* fläktfält som alla är
+procentvärden och inget av dem är läget:
+
+| Fält | Exempel | Betydelse |
+| :-- | --: | :-- |
+| `Fan speed (current)` | 85 % | Momentan varvtalsnivå |
+| `Fan speed normal` | 85 % | Nivå som används i normalläge |
+| `Fan speed slow reduction` | −20 % | Avdrag i lågläge |
+| `Fan speed boost increase` | +10 % | Påslag i boostläge |
+
+Effektiv nivå är alltså `normal + avdrag/påslag för aktivt läge`.
+
+Läge `4` finns bara på pumpar med styrprotokoll **1.8 eller senare**. På en
+äldre 1.6-pump avvisas skrivningen och integrationen döljer alternativet
+automatiskt. Schemat som läge 4 följer är samma som diagnostiksensorerna
+`sensor.comfortzone_reduced_fan_*_schedule` visar.
+
+### Vilket property-namn används?
+
+> [!IMPORTANT]
+> **Fläkten går inte att styra via Loggameras publika API.** Loggamera
+> support, efter en första felaktig gissning: *"Det går att styra i appen,
+> men funktionen finns inte tillgänglig i API:t."* Appen styr fläkten via
+> portalens eget gränssnitt, inte via `SetProperty`. Det stämmer med att
+> 46 propertynamn × 16 värdeformer alla avvisats, och med trafikanalysen
+> som visar att appen till stor del är en WebView mot `portal.loggamera.se`.
+
+**Läsning fungerar och är bekräftad.** `sensor.comfortzone_fan_mode` visar
+aktuellt läge (låg / normal / boost / schemalagd), läst ur `Fan state`
+(register 2069). Pumpens fyra övriga fläktfält är procentvärden och inget av
+dem är läget:
+
+| Fält | Exempel | Betydelse |
+| :-- | --: | :-- |
+| `Fan speed (current)` | 68 % | Momentan varvtalsnivå |
+| `Fan speed normal` | 85 % | Nivå i normalläge |
+| `Fan speed slow reduction` | −20 % | Avdrag i lågläge |
+| `Fan speed boost increase` | +10 % | Påslag i boostläge |
+
+Effektiv nivå är `normal + avdrag/påslag för aktivt läge`.
+
+`select.comfortzone_fan_speed` skapas **bara** om du fyllt i
+**Fan speed property name** i alternativen. En dropdown vars varje skrivning
+misslyckas är sämre än ingen dropdown alls — men skulle Loggamera exponera
+fläkten i API:t senare räcker det att fylla i namnet, ingen kodändring behövs.
+
+### Vill du faktiskt styra fläkten: lokal RS485
+
+ComfortZones tekniska support beskriver den lokala vägen: pumpen pratar ett
+dataprotokoll över serieport, inte JSON. Styrkortet har **två RS485-portar på
+RJ11 6P6C** — den ena går till manöverpanelen, **den andra är ledig**
+(19200 baud, 8N1). Pinout enligt
+[qix67/comfortzone_heatpump](https://github.com/qix67/comfortzone_heatpump):
+
+| Pin | Signal |
+| :-: | :-- |
+| 1, 5 | 24 V |
+| 2, 6 | GND |
+| 3 | RS485 B |
+| 4 | RS485 A |
+
+> [!WARNING]
+> Kastar du om A och B visar manöverpanelen "connection lost". Bibliotekets
+> författare gjorde det i ~2 minuter utan bestående skada, men koppla rätt.
+
+Det biblioteket implementerar `set_fan_speed(1|2|3|4)` över bussen — alltså
+exakt det vi inte kommer åt via molnet. Två förbehåll: det är utvecklat mot
+**EX50**, inte RX95, och det talar ComfortZones **egna ramformat**, inte
+Modbus. ComfortZone support nämner Modbus med registerexempel
+(`TE3 = Modbus(215) × 0.1`), vilket antyder att nyare modeller kan exponera
+Modbus RTU. Stämmer det klarar Home Assistants **inbyggda Modbus-integration**
+både läsning och skrivning utan någon egen kod.
+
+**Fråga ComfortZone support om registerkartan** — de har redan visat sig
+villiga att förklara protokollet:
+
+> Jag vill styra fläktläget lokalt från Home Assistant över RS485 på RX95.
+> Kan ni skicka registerkartan? Jag behöver särskilt: (1) registret för
+> fläktläge och om det är skrivbart, (2) giltiga värden, (3) bussparametrar
+> (baud, paritet, slave-id), (4) om RX95 talar Modbus RTU eller ert eget
+> ramformat.
+
+Med den kartan är resten enkel: USB-RS485-adapter på HA-värden, eller
+ESP32 + MAX485 med ESPHome.
 
 ---
 
@@ -224,6 +330,7 @@ flowchart LR
 - **30+ Sensors:** Indoor, outdoor, exhaust air, compressor power, frequency, fan speed, etc.
 - **Alarms & Status:** Filter alarm, main alarm, compressor status, valve positions (binary sensors).
 - **Settings:** Adjust heating curve and holiday days directly from your dashboard.
+- **Fan speed (new in 2.12):** Low, normal, boost and scheduled/automatic — the same four modes as the Android app.
 - **Smart Queuing:** Built-in write queue to handle the slow Loggamera API smoothly without crashing the integration.
 - **Diagnostics:** Built-in "Download Diagnostics" with redacted API key for easy bug reporting.
 - **Energy panel ready (new in 2.1):** Per-mode kWh sensors split between *space heating* and *domestic hot water*, plus optional cost sensors via a Nord Pool price entity. Because the RX95 has a single compressor, every kWh is unambiguously attributable to one of the two purposes.
